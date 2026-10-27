@@ -48,8 +48,16 @@ def handle_facts(text: str) -> str:
     return FALLBACK
 
 
+# Cactus Needle runtime. On the Android/Termux host the binary is ~/needle-android/needle
+# (NOT "needle3") with the model beside it. Override via env for other setups.
+# On the PC neither exists, so the call raises FileNotFoundError and the host
+# uses the keyword fallback.
+_NEEDLE_DIR = os.path.expanduser("~/needle-android")
+NEEDLE_BIN = os.environ.get("NEEDLE_BIN", os.path.join(_NEEDLE_DIR, "needle"))
+NEEDLE_MODEL = os.environ.get("NEEDLE_MODEL", os.path.join(_NEEDLE_DIR, "needle3.cact"))
+
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "1.9.0"
+ROBOT_VERSION = "1.10.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -268,7 +276,7 @@ def run_needle3_intent(user_prompt: str) -> str:
     extra = os.environ.get("NEEDLE3_EXTRA_ARGS", "").split()
     try:
         result = subprocess.run(
-            ["needle3", "--model", "needle3.cact", "--prompt", prompt,
+            [NEEDLE_BIN, "--model", NEEDLE_MODEL, "--prompt", prompt,
              "--forced", *extra],
             capture_output=True,
             text=True,
