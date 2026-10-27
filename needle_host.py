@@ -23,8 +23,33 @@ SERVICE_UUID = "4fa86970-43ac-11ed-b878-0242ac120002"
 NOTIFY_CHAR_UUID = "4fa86c40-43ac-11ed-b878-0242ac120002"  # ESP32 -> us (notify)
 WRITE_CHAR_UUID = "4fa86dae-43ac-11ed-b878-0242ac120002"   # us -> ESP32 (write)
 
+def _load_facts() -> dict:
+    """Load the curated facts file (question -> answer). Missing/broken file
+    just disables the feature; it never stops the bot."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "facts.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return {k.lower().strip(): v for k, v in json.load(f).items()}
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        print(f"[facts] not loaded ({e}); fact questions will fall back")
+        return {}
+
+
+FACTS = _load_facts()
+
+
+def handle_facts(text: str) -> str:
+    # match if a known fact key appears in the question (e.g. "what is the
+    # capital of france" contains "capital of france")
+    t = text.lower()
+    for key, answer in FACTS.items():
+        if key in t:
+            return answer
+    return FALLBACK
+
+
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "1.7.0"
+ROBOT_VERSION = "1.8.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -119,6 +144,7 @@ INTENT_TEMPLATES = {
     "INTENT_TIME": handle_time,
     "INTENT_DATE": handle_date,
     "INTENT_ROBOT_INFO": handle_robot_info,
+    "INTENT_FACT": handle_facts,
 }
 FALLBACK = "Sorry, I didn't catch that."
 
@@ -189,6 +215,8 @@ def _keyword_intent(text: str) -> str:
         return "INTENT_ROBOT_INFO"
     if any(w in t for w in ("hi", "hello", "hey", "greet")):
         return "INTENT_GREETING"
+    if any(key in t for key in FACTS):  # curated world-knowledge lookup
+        return "INTENT_FACT"
     return ""
 
 

@@ -42,8 +42,8 @@ def test_b3_joke():
     assert _routes_to("tell me a joke", "INTENT_JOKE")
 
 def test_b4_truly_unknown():
-    # a question with no intent + no handler still falls back
-    assert h.run_needle3_intent("what is the capital of France") == h.FALLBACK
+    # a question with no intent, no handler, and no curated fact still falls back
+    assert h.run_needle3_intent("what is the meaning of life") == h.FALLBACK
 
 def test_b5_gibberish():
     assert h.run_needle3_intent("asdf qwer") == h.FALLBACK
@@ -65,6 +65,16 @@ def test_b8_date():
 def test_b9_robot_info():
     assert h.ROBOT_NAME in h.run_needle3_intent("what is your name")
     assert h.ROBOT_VERSION in h.run_needle3_intent("what version are you")
+
+def test_facts_lookup():
+    # a curated fact is answered; an unknown one still falls back
+    assert "Paris" in h.run_needle3_intent("what is the capital of France")
+    assert h.run_needle3_intent("what is the capital of Narnia") == h.FALLBACK
+
+def test_facts_missing_file_safe(monkeypatch):
+    # if facts dict is empty, fact questions just fall back, no crash
+    monkeypatch.setattr(h, "FACTS", {})
+    assert h.run_needle3_intent("what is the capital of France") == h.FALLBACK
 
 def test_age_question():
     assert _routes_to("how old are you", "INTENT_ROBOT_INFO")
