@@ -1,0 +1,8 @@
+{
+  "_comment": "Whitelist: spoken app name -> exact launch command (argv list). ONLY these run. Edit package names to match your phone; find them with 'pm list packages'. Android/Termux uses 'am start'. Never put free/user text here.",
+  "camera": ["am", "start", "-a", "android.media.action.IMAGE_CAPTURE"],
+  "browser": ["am", "start", "-a", "android.intent.action.VIEW", "-d", "https://www.google.com"],
+  "settings": ["am", "start", "-a", "android.settings.SETTINGS"],
+  "clock": ["am", "start", "-a", "android.intent.action.SHOW_ALARMS"],
+  "maps": ["am", "start", "-a", "android.intent.action.VIEW", "-d", "geo:0,0"]
+}

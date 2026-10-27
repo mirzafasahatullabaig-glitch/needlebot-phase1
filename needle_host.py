@@ -47,6 +47,40 @@ def handle_facts(text: str) -> str:
     return FALLBACK
 
 
+def _load_apps() -> dict:
+    """Load the app launch whitelist (name -> argv list). Keys starting with
+    '_' are comments. Missing/broken file disables launching, never crashes."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        # only keep name -> list-of-str entries; drop comments and anything odd
+        return {k.lower().strip(): v for k, v in data.items()
+                if not k.startswith("_") and isinstance(v, list)
+                and all(isinstance(a, str) for a in v)}
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        print(f"[apps] not loaded ({e}); app launching disabled")
+        return {}
+
+
+APPS = _load_apps()
+
+
+def handle_open_app(text: str) -> str:
+    """Launch a whitelisted app. ONLY runs a fixed command from apps.json;
+    the user's text selects which, it is never passed to a shell."""
+    t = text.lower()
+    for name, cmd in APPS.items():
+        if name in t:
+            try:
+                subprocess.run(cmd, timeout=10)  # list form, no shell=True
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
+                print(f"[apps] launch failed for {name}: {e}")
+                return f"I couldn't open {name}."
+            return f"Opening {name}."
+    return "I can't open that one."
+
+
 # Cactus Needle runtime. On the Android/Termux host the binary is ~/needle-android/needle
 # (NOT "needle3") with the model beside it. Override via env for other setups.
 # On the PC neither exists, so the call raises FileNotFoundError and the host
@@ -63,7 +97,7 @@ TOOLS_PATH = os.environ.get(
 CONFIDENCE_MIN = 0.70  # needle's reported confidence below this -> fallback
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "2.1.0"
+ROBOT_VERSION = "2.2.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -175,6 +209,7 @@ INTENT_TEMPLATES = {
     "INTENT_DATE": handle_date,
     "INTENT_ROBOT_INFO": handle_robot_info,
     "INTENT_FACT": handle_facts,
+    "INTENT_OPEN_APP": handle_open_app,
 }
 FALLBACK = "Sorry, I didn't catch that."
 
@@ -229,6 +264,10 @@ def _keyword_intent(text: str) -> str:
     """Offline fallback classifier for hosts without needle3 (e.g. PC testing).
     Specific intents are checked before generic ones (math before greeting)."""
     t = text.lower()
+    # app launch: an explicit action verb AND a whitelisted app name, so
+    # "open clock" launches but "what time is it" stays INTENT_TIME.
+    if any(v in t for v in ("open", "launch", "start")) and any(n in t for n in APPS):
+        return "INTENT_OPEN_APP"
     if "joke" in t:
         return "INTENT_JOKE"
     # math: arithmetic words or any digit paired with an operator token

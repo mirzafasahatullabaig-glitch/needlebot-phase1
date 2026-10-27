@@ -106,6 +106,41 @@ def test_followup_without_history_falls_back():
     h._last_intent = ""  # no prior turn
     assert h.run_needle3_intent("another one") == h.FALLBACK
 
+def _app_run_recorder(calls):
+    """subprocess.run stub: needle calls (have --prompt) return empty-call JSON
+    so routing falls to keywords; app-launch calls (argv list) are recorded."""
+    class R: stdout = _needle_json(None)
+    def run(cmd, **kw):
+        if "--prompt" in cmd:
+            return R()
+        calls.append((cmd, kw))
+        return R()
+    return run
+
+def test_open_app_whitelist(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", _app_run_recorder(calls))
+    monkeypatch.setattr(h, "APPS", {"camera": ["am", "start", "-camera"]})
+    assert h.run_needle3_intent("open the camera") == "Opening camera."
+    assert calls[0][0] == ["am", "start", "-camera"]
+
+def test_open_app_unknown_not_launched(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", _app_run_recorder(calls))
+    monkeypatch.setattr(h, "APPS", {"camera": ["am", "start", "-camera"]})
+    assert h.run_needle3_intent("open spotify") != "Opening spotify."
+    assert calls == []  # nothing launched
+
+def test_open_app_no_shell_injection(monkeypatch):
+    # user text never becomes a command: only the fixed argv list runs, and
+    # the call is a list (no shell=True), so metacharacters can't inject
+    calls = []
+    monkeypatch.setattr(subprocess, "run", _app_run_recorder(calls))
+    monkeypatch.setattr(h, "APPS", {"camera": ["am", "start", "-camera"]})
+    h.run_needle3_intent("open camera; rm -rf ~")
+    assert calls[0][0] == ["am", "start", "-camera"]       # injected text absent
+    assert calls[0][1].get("shell") is not True
+
 def test_math_rejects_code():
     # safe eval: names/calls must not execute, must fall back cleanly
     assert h.run_needle3_intent("calculate __import__('os')") == h.FALLBACK
