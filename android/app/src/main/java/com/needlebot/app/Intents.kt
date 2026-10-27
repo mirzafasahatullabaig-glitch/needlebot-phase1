@@ -21,7 +21,7 @@ class Intents(private val ctx: Context) {
             "INTENT_GREETING", "INTENT_STATUS", "INTENT_JOKE", "INTENT_MATH",
             "INTENT_TIME", "INTENT_DATE", "INTENT_ROBOT_INFO", "INTENT_FACT",
             "INTENT_OPEN_APP", "INTENT_DEVICE", "INTENT_REMEMBER",
-            "INTENT_TIMER", "INTENT_SEARCH",
+            "INTENT_TIMER", "INTENT_SEARCH", "INTENT_FUN",
         )
         const val FALLBACK = "Sorry, I didn't catch that."
         const val ROBOT_NAME = "NeedleBot"
@@ -75,6 +75,7 @@ class Intents(private val ctx: Context) {
             "INTENT_REMEMBER" -> handleRemember(text)
             "INTENT_TIMER" -> handleTimer(text, onAnnounce)
             "INTENT_SEARCH" -> handleSearch(text)
+            "INTENT_FUN" -> handleFun(text)
             else -> FALLBACK
         }
 
@@ -89,6 +90,7 @@ class Intents(private val ctx: Context) {
         if ("timer" in t || (("remind" in t || "alarm" in t) && parseDuration(t) > 0)) return "INTENT_TIMER"
         if (Regex("\\bmy \\w+ is ").containsMatchIn(t) || "remember" in t ||
             Regex("what('?s| is) my \\w+").containsMatchIn(t)) return "INTENT_REMEMBER"
+        if ("coin" in t || "dice" in t || "roll a" in t) return "INTENT_FUN"
         if ("joke" in t) return "INTENT_JOKE"
         if (listOf("plus", "minus", "times", "divided").any { it in t } ||
             Regex("\\d\\s*[-+*/x]\\s*\\d").containsMatchIn(t) || "calculate" in t) return "INTENT_MATH"
@@ -206,9 +208,25 @@ class Intents(private val ctx: Context) {
             when {
                 "flashlight on" in t || "torch on" in t -> { cm.setTorchMode(camId, true); torchOn = true; "Flashlight on." }
                 "flashlight off" in t || "torch off" in t -> { cm.setTorchMode(camId, false); torchOn = false; "Flashlight off." }
+                "battery" in t -> batteryLevel()
                 else -> "I can't do that one."
             }
         } catch (e: Exception) { "I couldn't do that." }
+    }
+
+    private fun batteryLevel(): String {
+        val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+        val pct = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return if (pct in 0..100) "Battery is at $pct%." else "I couldn't read the battery."
+    }
+
+    private fun handleFun(text: String): String {
+        val t = text.lowercase()
+        return when {
+            "coin" in t -> "It's " + listOf("heads", "tails").random() + "."
+            "dice" in t || "die" in t || "roll" in t -> "You rolled a " + (1..6).random() + "."
+            else -> FALLBACK
+        }
     }
 
     private fun handleSearch(text: String): String {

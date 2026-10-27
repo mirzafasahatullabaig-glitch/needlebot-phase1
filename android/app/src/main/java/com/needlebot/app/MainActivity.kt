@@ -55,6 +55,20 @@ class MainActivity : AppCompatActivity() {
         intents = Intents(this)
         ble = BleManager(this, onText = { handleText(it, fromBle = true) }, onStatus = ::setStatus)
         requestPermissions()
+        requestOverlayPermission()
+    }
+
+    /** "Display over other apps" — without it Android blocks launching apps
+     *  while NeedleBot is in the background, so a BLE "open X" is dropped once
+     *  another app is in front. Sends the user to the grant screen once. */
+    private fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            !android.provider.Settings.canDrawOverlays(this)) {
+            setStatus("Allow 'Display over other apps' so it can open apps in the background.")
+            startActivity(android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")))
+        }
     }
 
     private fun buildUi(): View {
@@ -97,6 +111,33 @@ class MainActivity : AppCompatActivity() {
         }
         scroll = ScrollView(this).apply { addView(chat) }
         root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        // --- quick-action buttons ---
+        val quick = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(headerBg)
+            setPadding(px(8), px(6), px(8), px(2))
+        }
+        fun chip(label: String, onTap: () -> Unit) = Button(this).apply {
+            text = label
+            isAllCaps = false
+            setTextColor(textLight)
+            textSize = 13f
+            background = GradientDrawable().apply {
+                cornerRadius = px(16).toFloat(); setColor(botBubble)
+            }
+            setOnClickListener { onTap() }
+        }
+        val chipLp = { LinearLayout.LayoutParams(0, px(40), 1f).apply { leftMargin = px(4); rightMargin = px(4) } }
+        var torchState = false
+        quick.addView(chip("🔦 Light") {
+            torchState = !torchState
+            handleText(if (torchState) "flashlight on" else "flashlight off", fromBle = false)
+        }, chipLp())
+        quick.addView(chip("🎲 Dice") { handleText("roll a dice", fromBle = false) }, chipLp())
+        quick.addView(chip("🔋 Battery") { handleText("battery", fromBle = false) }, chipLp())
+        quick.addView(chip("Clear") { chat.removeAllViews() }, chipLp())
+        root.addView(quick, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         // --- input row ---
         val inputRow = LinearLayout(this).apply {
