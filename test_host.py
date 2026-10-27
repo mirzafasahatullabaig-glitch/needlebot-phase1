@@ -141,6 +141,30 @@ def test_open_app_no_shell_injection(monkeypatch):
     assert calls[0][0] == ["am", "start", "-camera"]       # injected text absent
     assert calls[0][1].get("shell") is not True
 
+def test_device_action(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", _app_run_recorder(calls))
+    monkeypatch.setattr(h, "DEVICES", {"flashlight on": {"cmd": ["termux-torch", "on"], "reply": "Flashlight on."}})
+    assert h.run_needle3_intent("turn the flashlight on") == "Flashlight on."
+    assert calls[0][0] == ["termux-torch", "on"]
+    # a device phrase not whitelisted isn't run
+    calls.clear()
+    assert h.run_needle3_intent("flashlight off") != "Flashlight off."
+
+def test_device_longest_phrase_wins(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _app_run_recorder([]))
+    monkeypatch.setattr(h, "DEVICES", {
+        "volume": {"cmd": ["x"], "reply": "vol"},
+        "volume up": {"cmd": ["y"], "reply": "up"}})
+    assert h.handle_device("volume up please") == "up"  # longest match
+
+def test_remember_and_recall():
+    h._MEMORY.clear()
+    assert "Sam" in h.run_needle3_intent("my name is Sam")
+    assert "Sam" in h.run_needle3_intent("what is my name")
+    assert h.run_needle3_intent("what is my favourite") == "I don't know your favourite yet." \
+        or "don't know" in h.run_needle3_intent("what is my favourite")
+
 def test_math_rejects_code():
     # safe eval: names/calls must not execute, must fall back cleanly
     assert h.run_needle3_intent("calculate __import__('os')") == h.FALLBACK

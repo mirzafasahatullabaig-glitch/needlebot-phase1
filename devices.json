@@ -1,0 +1,11 @@
+{
+  "_comment": "Device-action whitelist: phrase -> {cmd: fixed argv, reply: text}. ONLY these run, argv-only, never user text. Needs Termux:API (pkg install termux-api + the Termux:API app). {out} in reply is filled with the command's stdout.",
+  "flashlight on": {"cmd": ["termux-torch", "on"], "reply": "Flashlight on."},
+  "flashlight off": {"cmd": ["termux-torch", "off"], "reply": "Flashlight off."},
+  "torch on": {"cmd": ["termux-torch", "on"], "reply": "Torch on."},
+  "torch off": {"cmd": ["termux-torch", "off"], "reply": "Torch off."},
+  "volume up": {"cmd": ["termux-volume", "music", "10"], "reply": "Volume up."},
+  "volume down": {"cmd": ["termux-volume", "music", "3"], "reply": "Volume down."},
+  "battery": {"cmd": ["termux-battery-status"], "reply": "Battery: {out}"},
+  "vibrate": {"cmd": ["termux-vibrate", "-d", "500"], "reply": "Buzz!"}
+}

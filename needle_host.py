@@ -81,6 +81,48 @@ def handle_open_app(text: str) -> str:
     return "I can't open that one."
 
 
+def _load_devices() -> dict:
+    """Load the device-action whitelist: phrase -> {cmd: argv, reply: str}.
+    Same strict pattern as apps; missing/broken file just disables it."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "devices.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        out = {}
+        for k, v in data.items():
+            if k.startswith("_") or not isinstance(v, dict):
+                continue
+            cmd = v.get("cmd")
+            if isinstance(cmd, list) and all(isinstance(a, str) for a in cmd):
+                out[k.lower().strip()] = {"cmd": cmd, "reply": v.get("reply", "Done.")}
+        return out
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        print(f"[devices] not loaded ({e}); device actions disabled")
+        return {}
+
+
+DEVICES = _load_devices()
+
+
+def handle_device(text: str) -> str:
+    """Run a whitelisted device action (flashlight, volume, battery...).
+    Fixed argv from devices.json only; user text never reaches a shell.
+    Longest phrase wins so 'volume up' beats 'volume'."""
+    t = text.lower()
+    match = max((p for p in DEVICES if p in t), key=len, default=None)
+    if match is None:
+        return "I can't do that one."
+    entry = DEVICES[match]
+    try:
+        r = subprocess.run(entry["cmd"], timeout=10, capture_output=True, text=True)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
+        print(f"[devices] action failed for {match}: {e}")
+        return f"I couldn't do {match}."
+    reply = entry["reply"]
+    # {out} in the reply is filled with the command's stdout (e.g. battery %)
+    return reply.format(out=r.stdout.strip()) if "{out}" in reply else reply
+
+
 # Cactus Needle runtime. On the Android/Termux host the binary is ~/needle-android/needle
 # (NOT "needle3") with the model beside it. Override via env for other setups.
 # On the PC neither exists, so the call raises FileNotFoundError and the host
@@ -97,7 +139,7 @@ TOOLS_PATH = os.environ.get(
 CONFIDENCE_MIN = 0.70  # needle's reported confidence below this -> fallback
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "2.2.0"
+ROBOT_VERSION = "2.3.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -199,6 +241,38 @@ def handle_joke(_text: str) -> str:
     ])
 
 
+# In-session memory: things the user tells the bot to remember. Lost on
+# restart (single session), which is fine for a companion bot.
+_MEMORY: dict[str, str] = {}
+
+
+def handle_remember(text: str) -> str:
+    """Store a fact the user states, or recall it.
+    'my name is Sam' -> stores name=Sam; 'what is my name' -> recalls it.
+    'remember X' stores a free note under 'note'."""
+    t = text.lower().strip()
+    # "my X is Y" -> remember X = Y. Match on lowercase but keep the original
+    # case of the value (so "Sam" stays "Sam"); key is normalised lowercase.
+    m = re.search(r"my (\w+) is (.+)", text, re.IGNORECASE)
+    if m:
+        key, val = m.group(1).lower(), m.group(2).strip(" .!?")
+        _MEMORY[key] = val
+        return f"Got it, your {key} is {val}."
+    # "what is my X" / "what's my X" -> recall
+    m = re.search(r"my (\w+)", t)
+    if m and ("what" in t or "recall" in t):
+        key = m.group(1)
+        return f"Your {key} is {_MEMORY[key]}." if key in _MEMORY else f"I don't know your {key} yet."
+    # "remember <note>" -> store a note (keep original case)
+    m = re.search(r"remember (?:that )?(.+)", text, re.IGNORECASE)
+    if m:
+        _MEMORY["note"] = m.group(1).strip(" .!?")
+        return "I'll remember that."
+    if "note" in _MEMORY and ("what" in t):
+        return f"You asked me to remember: {_MEMORY['note']}."
+    return FALLBACK
+
+
 # A response is a fixed string (template) or a handler(user_text) -> str.
 INTENT_TEMPLATES = {
     "INTENT_GREETING": handle_greeting,
@@ -210,6 +284,8 @@ INTENT_TEMPLATES = {
     "INTENT_ROBOT_INFO": handle_robot_info,
     "INTENT_FACT": handle_facts,
     "INTENT_OPEN_APP": handle_open_app,
+    "INTENT_DEVICE": handle_device,
+    "INTENT_REMEMBER": handle_remember,
 }
 FALLBACK = "Sorry, I didn't catch that."
 
@@ -264,10 +340,16 @@ def _keyword_intent(text: str) -> str:
     """Offline fallback classifier for hosts without needle3 (e.g. PC testing).
     Specific intents are checked before generic ones (math before greeting)."""
     t = text.lower()
+    # device action: a whitelisted phrase present (e.g. "flashlight on")
+    if any(p in t for p in DEVICES):
+        return "INTENT_DEVICE"
     # app launch: an explicit action verb AND a whitelisted app name, so
     # "open clock" launches but "what time is it" stays INTENT_TIME.
     if any(v in t for v in ("open", "launch", "start")) and any(n in t for n in APPS):
         return "INTENT_OPEN_APP"
+    # memory: "my X is Y", "remember ...", or recall "what is my X"
+    if re.search(r"\bmy \w+ is ", t) or "remember" in t or re.search(r"what('?s| is) my \w+", t):
+        return "INTENT_REMEMBER"
     if "joke" in t:
         return "INTENT_JOKE"
     # math: arithmetic words or any digit paired with an operator token
