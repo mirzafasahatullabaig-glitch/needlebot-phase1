@@ -82,9 +82,10 @@ class Intents(private val ctx: Context) {
     private fun keywordIntent(t: String): String {
         val devicePhrases = listOf("flashlight on", "flashlight off", "torch on", "torch off", "battery")
         if (devicePhrases.any { it in t }) return "INTENT_DEVICE"
-        if (listOf("open", "launch", "start").any { it in t } &&
-            listOf("open", "launch", "start").any { "$it " in t }) return "INTENT_OPEN_APP"
-        if (listOf("search for", "google ", "look up").any { it in t }) return "INTENT_SEARCH"
+        // "open X in google/browser/web" means search for X, not launch an app
+        if (Regex("\\b(in|on) (google|the )?(browser|web|chrome|internet)\\b").containsMatchIn(t) ||
+            listOf("search for", "google ", "look up").any { it in t }) return "INTENT_SEARCH"
+        if (listOf("open ", "launch ", "start ").any { it in t }) return "INTENT_OPEN_APP"
         if ("timer" in t || (("remind" in t || "alarm" in t) && parseDuration(t) > 0)) return "INTENT_TIMER"
         if (Regex("\\bmy \\w+ is ").containsMatchIn(t) || "remember" in t ||
             Regex("what('?s| is) my \\w+").containsMatchIn(t)) return "INTENT_REMEMBER"
@@ -203,8 +204,10 @@ class Intents(private val ctx: Context) {
     }
 
     private fun handleSearch(text: String): String {
-        val q = Regex("\\b(search( for)?|google|look up|find)\\b", RegexOption.IGNORE_CASE)
-            .replace(text, "").trim(' ', '?', '.')
+        val q = text
+            .replace(Regex("\\b(in|on) (the )?(google|browser|web|chrome|internet)\\b", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\b(open|launch|start|search( for)?|google|look up|find)\\b", RegexOption.IGNORE_CASE), "")
+            .trim(' ', '?', '.')
         if (q.isEmpty()) return "What should I search for?"
         val url = "https://www.google.com/search?q=" + Uri.encode(q)
         return try {
