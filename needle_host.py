@@ -49,7 +49,7 @@ def handle_facts(text: str) -> str:
 
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "1.8.0"
+ROBOT_VERSION = "1.9.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -120,11 +120,23 @@ def handle_robot_info(text: str) -> str:
 
 
 def handle_greeting(_text: str) -> str:
-    return _pick(["Hey there!", "Hi! What's up?", "Hello! How can I help?"])
+    return _pick([
+        "Hey there!",
+        "Hi! What's up?",
+        "Hello! How can I help?",
+        "Hey! Good to see you.",
+        "Hi there, ready when you are.",
+    ])
 
 
 def handle_status(_text: str) -> str:
-    return _pick(["All good here.", "Doing great, thanks!", "Running smoothly."])
+    return _pick([
+        "All good here.",
+        "Doing great, thanks!",
+        "Running smoothly.",
+        "Feeling sharp today.",
+        "Happy to be helping.",
+    ])
 
 
 def handle_joke(_text: str) -> str:
@@ -132,6 +144,10 @@ def handle_joke(_text: str) -> str:
         "Why did the robot cross the road? It was programmed by a chicken.",
         "I'd tell you a UDP joke, but you might not get it.",
         "Why was the robot tired? It had a hard drive.",
+        "Why do programmers prefer dark mode? Because light attracts bugs.",
+        "I told my computer I needed a break, and it said 'no problem, I'll go to sleep.'",
+        "Why was the math book sad? It had too many problems.",
+        "There are 10 kinds of people: those who read binary and those who don't.",
     ])
 
 
