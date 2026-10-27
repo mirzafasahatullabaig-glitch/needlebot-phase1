@@ -63,7 +63,7 @@ TOOLS_PATH = os.environ.get(
 CONFIDENCE_MIN = 0.70  # needle's reported confidence below this -> fallback
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "2.0.0"
+ROBOT_VERSION = "2.0.1"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {

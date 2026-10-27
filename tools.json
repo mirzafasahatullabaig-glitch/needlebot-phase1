@@ -1,10 +1,10 @@
 [
-  {"name": "intent_greeting", "description": "User says hello, hi, hey, or otherwise greets the robot.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_status", "description": "User asks how the robot is doing or its status, e.g. 'how are you', 'you ok'.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_joke", "description": "User wants to hear a joke or something funny.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_math", "description": "User asks to compute an arithmetic expression, e.g. '2 plus 2', '10 times 5'.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_time", "description": "User asks for the current time or clock.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_date", "description": "User asks for today's date or day.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_robot_info", "description": "User asks about the robot itself: its name, version, age, capabilities, or 'are you ...' questions.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_fact", "description": "User asks a general-knowledge question such as a capital city, planet, or science fact.", "parameters": {"type": "object", "properties": {}}}
+  {"name": "intent_greeting", "description": "The user is greeting the robot or saying hello. Examples: 'hi', 'hello', 'hey there', 'good morning'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_status", "description": "The user asks how the robot itself is doing or feeling. Examples: 'how are you', 'you ok', 'how's it going'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_joke", "description": "The user wants to be entertained with a joke or something funny. Examples: 'tell me a joke', 'make me laugh', 'say something funny'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_math", "description": "The user wants to compute a NUMERIC arithmetic calculation with numbers and operators only. Examples: '2 plus 2', '10 times 5', '100 divided by 4', 'what is 7 minus 3'. Do NOT use this for questions about places, facts, or words.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_time", "description": "The user asks for the current clock time. Examples: 'what time is it', 'tell me the time'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_date", "description": "The user asks for today's calendar date or day of the week. Examples: 'what is the date', 'what day is it today'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_robot_info", "description": "The user asks about the robot itself: its name, version, age, what it can do, or 'are you ...' questions. Examples: 'what is your name', 'are you smart', 'how old are you', 'what can you do'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_fact", "description": "The user asks a general-knowledge or trivia question about the world: geography, capital cities, countries, planets, science, nature. Examples: 'what is the capital of France', 'what is the largest planet', 'how many continents are there'.", "parameters": {"type": "object", "properties": {}}}
 ]
