@@ -9,6 +9,8 @@ import asyncio
 import ast
 import json
 import operator
+import os
+import random
 import re
 import subprocess
 from datetime import datetime
@@ -22,7 +24,7 @@ NOTIFY_CHAR_UUID = "4fa86c40-43ac-11ed-b878-0242ac120002"  # ESP32 -> us (notify
 WRITE_CHAR_UUID = "4fa86dae-43ac-11ed-b878-0242ac120002"   # us -> ESP32 (write)
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "1.3.0"
+ROBOT_VERSION = "1.4.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -42,6 +44,11 @@ def _eval_math(node):
     raise ValueError("unsupported expression")
 
 
+def _pick(options: list[str]) -> str:
+    """Rotate through phrasings so repeated intents don't sound robotic."""
+    return random.choice(options)
+
+
 def handle_math(text: str) -> str:
     # pull the arithmetic part; spell out common words so "2 plus 2" works
     expr = text.lower()
@@ -57,33 +64,49 @@ def handle_math(text: str) -> str:
         return FALLBACK
     if isinstance(result, float) and result.is_integer():
         result = int(result)
-    return f"The answer is {result}."
+    return f"That's {result}."
 
 
 def handle_time(_text: str) -> str:
-    return f"The time is {datetime.now().strftime('%H:%M')}."
+    return f"It's {datetime.now().strftime('%-H:%M') if os.name != 'nt' else datetime.now().strftime('%#H:%M')}."
 
 
 def handle_date(_text: str) -> str:
-    return f"Today is {datetime.now().strftime('%A, %B %d, %Y')}."
+    return f"It's {datetime.now().strftime('%A, %B %d')}."
 
 
 def handle_robot_info(text: str) -> str:
     t = text.lower()
     if "name" in t:
-        return f"My name is {ROBOT_NAME}."
+        return f"I'm {ROBOT_NAME}."
     if "version" in t:
-        return f"I'm {ROBOT_NAME} running firmware {ROBOT_VERSION}."
+        return f"{ROBOT_NAME}, firmware {ROBOT_VERSION}."
     if "can you do" in t or "help" in t:
-        return "I can greet you, tell a joke, do math, and give the time or date."
-    return f"I'm {ROBOT_NAME}, your companion robot."
+        return "I can chat, tell jokes, do quick math, and give you the time or date."
+    return f"I'm {ROBOT_NAME}, a little companion robot."
+
+
+def handle_greeting(_text: str) -> str:
+    return _pick(["Hey there!", "Hi! What's up?", "Hello! How can I help?"])
+
+
+def handle_status(_text: str) -> str:
+    return _pick(["All good here.", "Doing great, thanks!", "Running smoothly."])
+
+
+def handle_joke(_text: str) -> str:
+    return _pick([
+        "Why did the robot cross the road? It was programmed by a chicken.",
+        "I'd tell you a UDP joke, but you might not get it.",
+        "Why was the robot tired? It had a hard drive.",
+    ])
 
 
 # A response is a fixed string (template) or a handler(user_text) -> str.
 INTENT_TEMPLATES = {
-    "INTENT_GREETING": "Hello! NeedleBot online and ready.",
-    "INTENT_STATUS": "All systems nominal. Running Phase 1 BLE text loop.",
-    "INTENT_JOKE": "Why did the robot cross the road? It was programmed by a chicken.",
+    "INTENT_GREETING": handle_greeting,
+    "INTENT_STATUS": handle_status,
+    "INTENT_JOKE": handle_joke,
     "INTENT_MATH": handle_math,
     "INTENT_TIME": handle_time,
     "INTENT_DATE": handle_date,
@@ -157,10 +180,21 @@ def _match_intent(out: str) -> str:
 def run_needle3_intent(user_prompt: str) -> str:
     """Return a response string. Uses needle3 when present; otherwise falls back
     to a built-in keyword classifier so the BLE loop is testable without it."""
-    prompt = f"Classify intent ({VALID_INTENTS}): {user_prompt}"
+    # Instruct single-code output so the model emits only the label, not prose.
+    # This targets the benchmark's prompt-echo at the source.
+    prompt = (
+        "You are an intent classifier. Reply with exactly one of these codes "
+        f"and nothing else: {VALID_INTENTS}. If none fit, reply NONE.\n"
+        f"Message: {user_prompt}\nIntent:"
+    )
+    # NEEDLE3_EXTRA_ARGS: set to cap output tokens IF the runtime supports it,
+    # e.g. "--max-tokens 6". Unverified from PC, so off by default to avoid
+    # passing a flag needle3 might reject. Confirm on-device before enabling.
+    extra = os.environ.get("NEEDLE3_EXTRA_ARGS", "").split()
     try:
         result = subprocess.run(
-            ["needle3", "--model", "needle3.cact", "--prompt", prompt, "--forced"],
+            ["needle3", "--model", "needle3.cact", "--prompt", prompt,
+             "--forced", *extra],
             capture_output=True,
             text=True,
             timeout=30,
