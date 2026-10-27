@@ -28,6 +28,17 @@ So the AI side does **not** need to be reimplemented. The phone runs
 `needle --serve` once; anything that can make an HTTP call to `localhost` gets
 classification. This removes the need to port needle or the model.
 
+**VERIFIED on the phone (2026-10-28).** `needle --serve` running, then:
+```
+curl -s localhost:8080/complete -d '{"input":"tell me a joke"}'
+→ {"type":"call","function_calls":[{"name":"intent_joke","arguments":{}}],
+   "confidence":0.7801,"prefill_tps":87.7,"decode_tps":24.5,"peak_ram_mb":75.5,...}
+```
+The JSON is **identical** to the subprocess output, so `_intent_from_needle`
+from `needle_host.py` ports over unchanged. The Android app's AI integration is
+therefore: `POST localhost:8080/complete` → read `function_calls[0].name` and
+`confidence` → same mapping/gate as today. No needle or model code to write.
+
 ## What Python can and cannot do here
 
 - **Cannot:** act as a BLE central or peripheral on Android (bleak unsupported;
