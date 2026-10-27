@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
@@ -77,7 +78,7 @@ class BleManager(
             val notify = svc.getCharacteristic(NOTIFY_UUID) ?: return
             g.setCharacteristicNotification(notify, true)
             notify.getDescriptor(CCCD_UUID)?.let {
-                it.value = BluetoothGattCharacteristic.ENABLE_NOTIFICATION_VALUE
+                it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 g.writeDescriptor(it)
             }
             onStatus("Ready - send a message from the ESP32")
