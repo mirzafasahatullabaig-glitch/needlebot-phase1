@@ -14,7 +14,6 @@ import random
 import re
 import subprocess
 from datetime import datetime
-from difflib import SequenceMatcher
 
 from bleak import BleakClient, BleakScanner
 
@@ -55,9 +54,16 @@ def handle_facts(text: str) -> str:
 _NEEDLE_DIR = os.path.expanduser("~/needle-android")
 NEEDLE_BIN = os.environ.get("NEEDLE_BIN", os.path.join(_NEEDLE_DIR, "needle"))
 NEEDLE_MODEL = os.environ.get("NEEDLE_MODEL", os.path.join(_NEEDLE_DIR, "needle3.cact"))
+# tools.json ships beside this script; each tool is an intent.
+TOOLS_PATH = os.environ.get(
+    "NEEDLE_TOOLS",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.json"),
+)
+# tool name "intent_joke" <-> intent code "INTENT_JOKE"
+CONFIDENCE_MIN = 0.70  # needle's reported confidence below this -> fallback
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "1.10.0"
+ROBOT_VERSION = "2.0.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -182,24 +188,25 @@ def _respond(intent: str, user_text: str) -> str:
         return FALLBACK
     return r(user_text) if callable(r) else r
 
-# Needle 3 eval (needle3.cact, Android/Termux): reliable only as a JSON intent
-# router. Free-form output shows prompt echoing and truncation, with confidence
-# as low as 0.028. These two guards enforce the report's middleware directives.
-ECHO_SIMILARITY_MAX = 0.70   # reject arg that just echoes the prompt
-CONFIDENCE_MIN = 0.70        # below this, treat classification as unknown
-
-
-def _is_prompt_echo(user_prompt: str, out: str) -> bool:
-    """True if needle3's output is mostly the prompt repeated back (the report's
-    similarity(prompt, arg) > 0.7 failure mode)."""
-    return SequenceMatcher(None, user_prompt.lower(), out.lower()).ratio() > ECHO_SIMILARITY_MAX
-
-
-def _parse_confidence(out: str) -> float | None:
-    """Pull a confidence score (0..1) from needle3 stdout if present; tolerant of
-    format since the real stdout layout is only known on-device. None = absent."""
-    m = re.search(r"confidence[\"']?\s*[:=]\s*([01]?\.\d+)", out, re.IGNORECASE)
-    return float(m.group(1)) if m else None
+def _intent_from_needle(stdout: str) -> str:
+    """Parse needle's JSON tool-call output into an intent code.
+    Picks function_calls[0].name ('intent_joke' -> 'INTENT_JOKE'), honouring
+    the reported confidence. Empty call or low confidence -> '' (fallback)."""
+    try:
+        data = json.loads(stdout.strip().splitlines()[-1])  # last line is the JSON
+    except (json.JSONDecodeError, IndexError):
+        print(f"[needle] unparseable output: {stdout.strip()!r}")
+        return ""
+    calls = data.get("function_calls") or []
+    if not calls:
+        return ""  # model declined to dispatch -> no intent
+    conf = data.get("confidence")
+    if isinstance(conf, (int, float)) and conf < CONFIDENCE_MIN:
+        print(f"[needle] low confidence {conf:.3f} < {CONFIDENCE_MIN}, fallback")
+        return ""
+    name = calls[0].get("name", "")           # e.g. "intent_joke"
+    intent = name.upper()                      # -> "INTENT_JOKE"
+    return intent if intent in INTENT_TEMPLATES else ""
 
 
 # Last intent routed this session, for resolving bare follow-ups like
@@ -244,16 +251,6 @@ def _keyword_intent(text: str) -> str:
     return ""
 
 
-def _match_intent(out: str) -> str:
-    """Pick the intent code from needle3 stdout, scanning last line first so an
-    echoed prompt (which lists every intent name) can't win over the real answer."""
-    for line in reversed(out.splitlines()):
-        for intent in INTENT_TEMPLATES:
-            if intent in line:
-                return intent
-    return ""
-
-
 def run_needle3_intent(user_prompt: str) -> str:
     """Return a response string. Uses needle3 when present; otherwise falls back
     to a built-in keyword classifier so the BLE loop is testable without it."""
@@ -263,41 +260,23 @@ def run_needle3_intent(user_prompt: str) -> str:
     if _is_followup(user_prompt) and _last_intent:
         return _respond(_last_intent, user_prompt)
 
-    # Instruct single-code output so the model emits only the label, not prose.
-    # This targets the benchmark's prompt-echo at the source.
-    prompt = (
-        "You are an intent classifier. Reply with exactly one of these codes "
-        f"and nothing else: {VALID_INTENTS}. If none fit, reply NONE.\n"
-        f"Message: {user_prompt}\nIntent:"
-    )
-    # NEEDLE3_EXTRA_ARGS: set to cap output tokens IF the runtime supports it,
-    # e.g. "--max-tokens 6". Unverified from PC, so off by default to avoid
-    # passing a flag needle3 might reject. Confirm on-device before enabling.
-    extra = os.environ.get("NEEDLE3_EXTRA_ARGS", "").split()
+    # Needle 3 is a tool-calling model: it picks a tool from tools.json and
+    # returns JSON with function_calls[].name. The chosen tool name is the
+    # intent. --forced makes it always dispatch a call.
     try:
         result = subprocess.run(
-            [NEEDLE_BIN, "--model", NEEDLE_MODEL, "--prompt", prompt,
-             "--forced", *extra],
+            [NEEDLE_BIN, "--model", NEEDLE_MODEL, "--tools", TOOLS_PATH,
+             "--prompt", user_prompt, "--forced"],
             capture_output=True,
             text=True,
             timeout=30,
         )
-        out = result.stdout.strip()
-        if _is_prompt_echo(user_prompt, out):
-            print(f"[needle3] rejected prompt echo: {out!r}")
-            return FALLBACK
-        conf = _parse_confidence(out)
-        if conf is not None and conf < CONFIDENCE_MIN:
-            print(f"[needle3] low confidence {conf:.3f} < {CONFIDENCE_MIN}, fallback")
-            return FALLBACK
-        intent = _match_intent(out)
-        if not intent:
-            print(f"[needle3] no intent matched in: {out!r}")
+        intent = _intent_from_needle(result.stdout)
     except FileNotFoundError:
-        print("[needle3] binary not found, using keyword fallback (PC test mode)")
+        print("[needle] binary not found, using keyword fallback (PC test mode)")
         intent = _keyword_intent(user_prompt)
     except subprocess.TimeoutExpired:
-        print("[needle3] timed out")
+        print("[needle] timed out")
         intent = ""
 
     if intent:

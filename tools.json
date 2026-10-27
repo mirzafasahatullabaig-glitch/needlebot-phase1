@@ -1,0 +1,10 @@
+[
+  {"name": "intent_greeting", "description": "User says hello, hi, hey, or otherwise greets the robot.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_status", "description": "User asks how the robot is doing or its status, e.g. 'how are you', 'you ok'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_joke", "description": "User wants to hear a joke or something funny.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_math", "description": "User asks to compute an arithmetic expression, e.g. '2 plus 2', '10 times 5'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_time", "description": "User asks for the current time or clock.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_date", "description": "User asks for today's date or day.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_robot_info", "description": "User asks about the robot itself: its name, version, age, capabilities, or 'are you ...' questions.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_fact", "description": "User asks a general-knowledge question such as a capital city, planet, or science fact.", "parameters": {"type": "object", "properties": {}}}
+]
