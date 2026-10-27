@@ -1,8 +1,19 @@
 package com.needlebot.app
 
 import android.Manifest
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.inputmethod.EditorInfo
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -13,8 +24,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Wires the pieces: BLE text in -> needle HTTP classify -> intent response ->
- * BLE out. A simple scrolling log is the whole UI for v1.
+ * Chat UI over the BLE + needle pipeline. Messages arriving over BLE and
+ * messages typed on the phone both go through handleText; only BLE-origin
+ * messages get their reply sent back out over BLE.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -22,17 +34,116 @@ class MainActivity : AppCompatActivity() {
     private lateinit var intents: Intents
     private val needle = NeedleClient()
     private val scope = CoroutineScope(Dispatchers.Main)
-    private lateinit var log: TextView
+
+    private lateinit var chat: LinearLayout
+    private lateinit var scroll: ScrollView
+    private lateinit var status: TextView
+
+    // palette
+    private val bg = Color.parseColor("#0F1115")
+    private val headerBg = Color.parseColor("#171A21")
+    private val botBubble = Color.parseColor("#232834")
+    private val youBubble = Color.parseColor("#2D6CF6")
+    private val textLight = Color.parseColor("#E6E8EC")
+    private val textMuted = Color.parseColor("#8A909C")
+    private val accent = Color.parseColor("#2D6CF6")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        log = TextView(this).apply { textSize = 14f; setPadding(24, 24, 24, 24) }
-        setContentView(ScrollView(this).apply { addView(log) })
+        setContentView(buildUi())
 
         intents = Intents(this)
-        ble = BleManager(this, onText = ::handleText, onStatus = ::append)
-
+        ble = BleManager(this, onText = { handleText(it, fromBle = true) }, onStatus = ::setStatus)
         requestPermissions()
+    }
+
+    private fun buildUi(): View {
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+            fitsSystemWindows = true
+        }
+
+        // --- header: title + status dot ---
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(headerBg)
+            setPadding(px(20), px(16), px(20), px(16))
+        }
+        header.addView(TextView(this).apply {
+            text = "NeedleBot"
+            setTextColor(textLight)
+            textSize = 20f
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        })
+        status = TextView(this).apply {
+            text = "● starting…"
+            setTextColor(textMuted)
+            textSize = 13f
+        }
+        header.addView(status)
+        root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
+        // --- scrolling chat area ---
+        chat = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(12), px(12), px(12), px(12))
+        }
+        scroll = ScrollView(this).apply { addView(chat) }
+        root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        // --- input row ---
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(headerBg)
+            setPadding(px(12), px(10), px(12), px(10))
+        }
+        val field = EditText(this).apply {
+            hint = "Type a message…"
+            setHintTextColor(textMuted)
+            setTextColor(textLight)
+            textSize = 16f
+            setPadding(px(16), px(12), px(16), px(12))
+            background = GradientDrawable().apply {
+                cornerRadius = px(22).toFloat()
+                setColor(botBubble)
+            }
+            maxLines = 4
+            imeOptions = EditorInfo.IME_ACTION_SEND
+        }
+        inputRow.addView(field, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+
+        val send = Button(this).apply {
+            text = "Send"
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                cornerRadius = px(22).toFloat()
+                setColor(accent)
+            }
+            setPadding(px(20), 0, px(20), 0)
+        }
+        inputRow.addView(send, LinearLayout.LayoutParams(WRAP_CONTENT, px(48)).apply {
+            leftMargin = px(8)
+        })
+        root.addView(inputRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
+        val submit = {
+            val t = field.text.toString().trim()
+            if (t.isNotEmpty()) { field.setText(""); handleText(t, fromBle = false) }
+        }
+        send.setOnClickListener { submit() }
+        field.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) { submit(); true } else false
+        }
+        return root
     }
 
     private fun requestPermissions() {
@@ -46,26 +157,51 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(rc: Int, p: Array<String>, r: IntArray) {
         super.onRequestPermissionsResult(rc, p, r)
         if (r.isNotEmpty() && r.all { it == 0 }) ble.start()
-        else append("Bluetooth permission denied.")
+        else setStatus("Bluetooth permission denied.")
     }
 
-    /** A user message arrived over BLE: classify with needle, respond, send back. */
-    private fun handleText(text: String) {
-        append("RX: $text")
+    /** A message to classify, from BLE or the on-screen input. */
+    private fun handleText(text: String, fromBle: Boolean) {
+        bubble(text, mine = true)
         scope.launch {
-            // needle HTTP call off the main thread
             val intent = withContext(Dispatchers.IO) { needle.classify(text) }
             val reply = intents.respond(text, intent) { msg ->
-                // timer announcements fire later, on the main thread
-                runOnUiThread { append("TX (timer): $msg"); ble.send(msg) }
+                runOnUiThread { bubble(msg, mine = false); if (fromBle) ble.send(msg) }
             }
-            append("TX: $reply")
-            ble.send(reply)
+            bubble(reply, mine = false)
+            if (fromBle) ble.send(reply)
         }
     }
 
-    private fun append(line: String) = runOnUiThread {
-        log.append("$line\n")
+    /** A chat bubble: mine (right, blue) or the bot's (left, grey). */
+    private fun bubble(text: String, mine: Boolean) = runOnUiThread {
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val tv = TextView(this).apply {
+            this.text = text
+            setTextColor(if (mine) Color.WHITE else textLight)
+            textSize = 16f
+            setPadding(px(14), px(10), px(14), px(10))
+            background = GradientDrawable().apply {
+                cornerRadius = px(18).toFloat()
+                setColor(if (mine) youBubble else botBubble)
+            }
+        }
+        val lp = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+            topMargin = px(4); bottomMargin = px(4)
+            gravity = if (mine) Gravity.END else Gravity.START
+            marginStart = if (mine) px(48) else 0
+            marginEnd = if (mine) 0 else px(48)
+        }
+        chat.addView(tv, lp)
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** Connection status in the header (and a muted centered line in chat). */
+    private fun setStatus(line: String) = runOnUiThread {
+        val connected = line.startsWith("Ready") || line.startsWith("Connected")
+        status.text = "● " + line
+        status.setTextColor(if (connected) accent else textMuted)
     }
 
     override fun onDestroy() {

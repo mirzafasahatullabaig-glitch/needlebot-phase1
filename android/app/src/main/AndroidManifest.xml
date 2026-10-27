@@ -22,7 +22,7 @@
         android:allowBackup="true"
         android:label="NeedleBot"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar">
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
         <activity
             android:name=".MainActivity"
             android:exported="true">
