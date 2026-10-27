@@ -158,7 +158,7 @@ class Intents(private val ctx: Context) {
     private fun handleOpenApp(text: String): String {
         val t = text.lowercase()
         val intent = when {
-            "camera" in t -> Intent("android.media.action.IMAGE_CAPTURE")
+            "camera" in t -> Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
             "browser" in t -> Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"))
             "maps" in t -> Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0"))
             "settings" in t -> Intent(android.provider.Settings.ACTION_SETTINGS)
