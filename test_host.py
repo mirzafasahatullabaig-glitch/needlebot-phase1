@@ -66,6 +66,11 @@ def test_b9_robot_info():
     assert h.ROBOT_NAME in h.run_needle3_intent("what is your name")
     assert h.ROBOT_VERSION in h.run_needle3_intent("what version are you")
 
+def test_age_question():
+    assert _routes_to("how old are you", "INTENT_ROBOT_INFO")
+    assert _routes_to("what is your age", "INTENT_ROBOT_INFO")
+    assert h.run_needle3_intent("how old are you").isascii()  # no mangled chars
+
 def test_are_you_questions():
     # "are you X" is robot-info, but "how are you" must stay status
     assert _routes_to("are you smart", "INTENT_ROBOT_INFO")
