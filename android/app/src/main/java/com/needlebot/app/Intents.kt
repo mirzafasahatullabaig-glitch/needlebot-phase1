@@ -83,7 +83,7 @@ class Intents(private val ctx: Context) {
         val devicePhrases = listOf("flashlight on", "flashlight off", "torch on", "torch off", "battery")
         if (devicePhrases.any { it in t }) return "INTENT_DEVICE"
         // "open X in google/browser/web" means search for X, not launch an app
-        if (Regex("\\b(in|on) (google|the )?(browser|web|chrome|internet)\\b").containsMatchIn(t) ||
+        if (Regex("\\b(in|on) (the )?(google|browser|web|chrome|internet)\\b").containsMatchIn(t) ||
             listOf("search for", "google ", "look up").any { it in t }) return "INTENT_SEARCH"
         if (listOf("open ", "launch ", "start ").any { it in t }) return "INTENT_OPEN_APP"
         if ("timer" in t || (("remind" in t || "alarm" in t) && parseDuration(t) > 0)) return "INTENT_TIMER"
