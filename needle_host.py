@@ -7,7 +7,9 @@ the matching template response back over BLE.
 
 import asyncio
 import json
+import re
 import subprocess
+from difflib import SequenceMatcher
 
 from bleak import BleakClient, BleakScanner
 
@@ -24,6 +26,25 @@ INTENT_TEMPLATES = {
 FALLBACK = "Sorry, I didn't catch that."
 
 VALID_INTENTS = ",".join(INTENT_TEMPLATES)
+
+# Needle 3 eval (needle3.cact, Android/Termux): reliable only as a JSON intent
+# router. Free-form output shows prompt echoing and truncation, with confidence
+# as low as 0.028. These two guards enforce the report's middleware directives.
+ECHO_SIMILARITY_MAX = 0.70   # reject arg that just echoes the prompt
+CONFIDENCE_MIN = 0.70        # below this, treat classification as unknown
+
+
+def _is_prompt_echo(user_prompt: str, out: str) -> bool:
+    """True if needle3's output is mostly the prompt repeated back (the report's
+    similarity(prompt, arg) > 0.7 failure mode)."""
+    return SequenceMatcher(None, user_prompt.lower(), out.lower()).ratio() > ECHO_SIMILARITY_MAX
+
+
+def _parse_confidence(out: str) -> float | None:
+    """Pull a confidence score (0..1) from needle3 stdout if present; tolerant of
+    format since the real stdout layout is only known on-device. None = absent."""
+    m = re.search(r"confidence[\"']?\s*[:=]\s*([01]?\.\d+)", out, re.IGNORECASE)
+    return float(m.group(1)) if m else None
 
 
 def _keyword_intent(text: str) -> str:
@@ -59,9 +80,17 @@ def run_needle3_intent(user_prompt: str) -> str:
             text=True,
             timeout=30,
         )
-        intent = _match_intent(result.stdout.strip())
+        out = result.stdout.strip()
+        if _is_prompt_echo(user_prompt, out):
+            print(f"[needle3] rejected prompt echo: {out!r}")
+            return FALLBACK
+        conf = _parse_confidence(out)
+        if conf is not None and conf < CONFIDENCE_MIN:
+            print(f"[needle3] low confidence {conf:.3f} < {CONFIDENCE_MIN}, fallback")
+            return FALLBACK
+        intent = _match_intent(out)
         if not intent:
-            print(f"[needle3] no intent matched in: {result.stdout.strip()!r}")
+            print(f"[needle3] no intent matched in: {out!r}")
     except FileNotFoundError:
         print("[needle3] binary not found, using keyword fallback (PC test mode)")
         intent = _keyword_intent(user_prompt)
