@@ -166,7 +166,7 @@ class Intents(private val ctx: Context) {
             else -> null
         }
         if (sys != null) {
-            return try { ctx.startActivity(sys.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Opening it." }
+            return try { launchFresh(sys); "Opening it." }
             catch (e: Exception) { "I couldn't open that." }
         }
         // Otherwise: open any installed app by spoken name.
@@ -174,8 +174,16 @@ class Intents(private val ctx: Context) {
             .replace(text, "").trim(' ', '.', '!', '?', ',').lowercase()
         if (name.isEmpty()) return "What should I open?"
         val launch = findLaunchIntent(name) ?: return "I don't have an app called $name."
-        return try { ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Opening $name." }
+        return try { launchFresh(launch); "Opening $name." }
         catch (e: Exception) { "I couldn't open $name." }
+    }
+
+    /** Start an app from the background bringing it to front. NEW_TASK alone
+     *  often just re-focuses the current foreground task; CLEAR_TOP forces the
+     *  target app forward so a second "open Y" actually switches to Y. */
+    private fun launchFresh(intent: Intent) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        ctx.startActivity(intent)
     }
 
     /** Match a spoken app name to an installed app's launch intent (label
@@ -211,7 +219,7 @@ class Intents(private val ctx: Context) {
         if (q.isEmpty()) return "What should I search for?"
         val url = "https://www.google.com/search?q=" + Uri.encode(q)
         return try {
-            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            launchFresh(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             "Searching for $q."
         } catch (e: Exception) { "I couldn't open a search." }
     }
