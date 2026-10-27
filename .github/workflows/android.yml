@@ -1,0 +1,29 @@
+name: Build APK
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      # No wrapper committed yet: generate one matching build.gradle (AGP 8.5.2 needs Gradle 8.7+)
+      - run: gradle wrapper --gradle-version 8.7
+      - run: ./gradlew assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: needlebot-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
