@@ -6,9 +6,12 @@ the matching template response back over BLE.
 """
 
 import asyncio
+import ast
 import json
+import operator
 import re
 import subprocess
+from datetime import datetime
 from difflib import SequenceMatcher
 
 from bleak import BleakClient, BleakScanner
@@ -18,14 +21,85 @@ SERVICE_UUID = "4fa86970-43ac-11ed-b878-0242ac120002"
 NOTIFY_CHAR_UUID = "4fa86c40-43ac-11ed-b878-0242ac120002"  # ESP32 -> us (notify)
 WRITE_CHAR_UUID = "4fa86dae-43ac-11ed-b878-0242ac120002"   # us -> ESP32 (write)
 
+ROBOT_NAME = "NeedleBot"
+ROBOT_VERSION = "1.3.0"
+
+# Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
+_MATH_OPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.Pow: operator.pow, ast.Mod: operator.mod,
+    ast.USub: operator.neg, ast.UAdd: operator.pos,
+}
+
+
+def _eval_math(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _MATH_OPS:
+        return _MATH_OPS[type(node.op)](_eval_math(node.left), _eval_math(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _MATH_OPS:
+        return _MATH_OPS[type(node.op)](_eval_math(node.operand))
+    raise ValueError("unsupported expression")
+
+
+def handle_math(text: str) -> str:
+    # pull the arithmetic part; spell out common words so "2 plus 2" works
+    expr = text.lower()
+    for word, sym in (("plus", "+"), ("minus", "-"), ("times", "*"),
+                      ("multiplied by", "*"), ("divided by", "/"), ("x", "*")):
+        expr = expr.replace(word, sym)
+    expr = re.sub(r"[^0-9+\-*/.()%\s]", "", expr).strip()
+    if not expr:
+        return FALLBACK
+    try:
+        result = _eval_math(ast.parse(expr, mode="eval").body)
+    except (ValueError, SyntaxError, ZeroDivisionError, TypeError):
+        return FALLBACK
+    if isinstance(result, float) and result.is_integer():
+        result = int(result)
+    return f"The answer is {result}."
+
+
+def handle_time(_text: str) -> str:
+    return f"The time is {datetime.now().strftime('%H:%M')}."
+
+
+def handle_date(_text: str) -> str:
+    return f"Today is {datetime.now().strftime('%A, %B %d, %Y')}."
+
+
+def handle_robot_info(text: str) -> str:
+    t = text.lower()
+    if "name" in t:
+        return f"My name is {ROBOT_NAME}."
+    if "version" in t:
+        return f"I'm {ROBOT_NAME} running firmware {ROBOT_VERSION}."
+    if "can you do" in t or "help" in t:
+        return "I can greet you, tell a joke, do math, and give the time or date."
+    return f"I'm {ROBOT_NAME}, your companion robot."
+
+
+# A response is a fixed string (template) or a handler(user_text) -> str.
 INTENT_TEMPLATES = {
     "INTENT_GREETING": "Hello! NeedleBot online and ready.",
     "INTENT_STATUS": "All systems nominal. Running Phase 1 BLE text loop.",
     "INTENT_JOKE": "Why did the robot cross the road? It was programmed by a chicken.",
+    "INTENT_MATH": handle_math,
+    "INTENT_TIME": handle_time,
+    "INTENT_DATE": handle_date,
+    "INTENT_ROBOT_INFO": handle_robot_info,
 }
 FALLBACK = "Sorry, I didn't catch that."
 
 VALID_INTENTS = ",".join(INTENT_TEMPLATES)
+
+
+def _respond(intent: str, user_text: str) -> str:
+    """Resolve an intent to its response string, calling handlers with the text."""
+    r = INTENT_TEMPLATES.get(intent)
+    if r is None:
+        return FALLBACK
+    return r(user_text) if callable(r) else r
 
 # Needle 3 eval (needle3.cact, Android/Termux): reliable only as a JSON intent
 # router. Free-form output shows prompt echoing and truncation, with confidence
@@ -48,10 +122,21 @@ def _parse_confidence(out: str) -> float | None:
 
 
 def _keyword_intent(text: str) -> str:
-    """Offline fallback classifier for hosts without needle3 (e.g. PC testing)."""
+    """Offline fallback classifier for hosts without needle3 (e.g. PC testing).
+    Specific intents are checked before generic ones (math before greeting)."""
     t = text.lower()
     if "joke" in t:
         return "INTENT_JOKE"
+    # math: arithmetic words or any digit paired with an operator token
+    if any(w in t for w in ("plus", "minus", "times", "multiplied", "divided")) or \
+            re.search(r"\d\s*[-+*/x]\s*\d", t) or "calculate" in t:
+        return "INTENT_MATH"
+    if "time" in t or "clock" in t:
+        return "INTENT_TIME"
+    if "date" in t or "day is" in t or "today" in t:
+        return "INTENT_DATE"
+    if any(w in t for w in ("your name", "version", "can you do", "who are you", "what are you")):
+        return "INTENT_ROBOT_INFO"
     if "status" in t or "how are you" in t:
         return "INTENT_STATUS"
     if any(w in t for w in ("hi", "hello", "hey", "greet")):
@@ -98,7 +183,7 @@ def run_needle3_intent(user_prompt: str) -> str:
         print("[needle3] timed out")
         intent = ""
 
-    return INTENT_TEMPLATES.get(intent, FALLBACK)
+    return _respond(intent, user_prompt)
 
 
 async def main() -> None:
@@ -111,25 +196,36 @@ async def main() -> None:
     async with BleakClient(device) as client:
         print(f"Connected to {device.address}")
 
-        async def on_notify(_char, data: bytearray) -> None:
+        # Queue messages from the notify callback and process them one at a
+        # time below. Doing the classify+write inside the callback blocked the
+        # BLE handler, so a message arriving mid-write was dropped.
+        queue: asyncio.Queue[str] = asyncio.Queue()
+
+        def on_notify(_char, data: bytearray) -> None:
             try:
-                payload = json.loads(data.decode("utf-8"))
-                text = payload.get("text", "")
+                text = json.loads(data.decode("utf-8")).get("text", "")
             except (UnicodeDecodeError, json.JSONDecodeError):
                 print(f"[RX] non-JSON payload: {data!r}")
                 return
             print(f"[RX text]: {text}")
-            response = run_needle3_intent(text)
-            print(f"[TX response]: {response}")
-            await client.write_gatt_char(
-                WRITE_CHAR_UUID, response.encode("utf-8"), response=False
-            )
+            queue.put_nowait(text)
 
         await client.start_notify(NOTIFY_CHAR_UUID, on_notify)
         print("Listening. Type in the ESP32 Serial Monitor. Ctrl-C to quit.")
         try:
             while client.is_connected:
-                await asyncio.sleep(1)
+                try:
+                    text = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue  # poll connection state, nothing queued
+                response = run_needle3_intent(text)
+                print(f"[TX response]: {response}")
+                try:
+                    await client.write_gatt_char(
+                        WRITE_CHAR_UUID, response.encode("utf-8"), response=True
+                    )
+                except Exception as e:  # report instead of silently dropping
+                    print(f"[TX ERROR] write failed: {e}")
         finally:
             await client.stop_notify(NOTIFY_CHAR_UUID)
 

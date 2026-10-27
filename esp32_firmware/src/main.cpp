@@ -56,6 +56,7 @@ void setup() {
   Serial.println("\n[NeedleBot-S3] starting");
 
   BLEDevice::init(DEVICE_NAME);
+  BLEDevice::setMTU(185);  // raise MTU so full responses fit one write (default ~23)
   BLEServer *server = BLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
 

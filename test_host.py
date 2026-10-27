@@ -36,11 +36,35 @@ def test_b2_status():
 def test_b3_joke():
     assert h.run_needle3_intent("tell me a joke") == T["INTENT_JOKE"]
 
-def test_b4_unknown_math():
-    assert h.run_needle3_intent("what is 2 plus 2") == h.FALLBACK
+def test_b4_truly_unknown():
+    # a question with no intent + no handler still falls back
+    assert h.run_needle3_intent("what is the capital of France") == h.FALLBACK
 
 def test_b5_gibberish():
     assert h.run_needle3_intent("asdf qwer") == h.FALLBACK
+
+
+# --- new data-answering intents ---
+
+def test_b6_math():
+    assert h.run_needle3_intent("what is 2 plus 2") == "The answer is 4."
+    assert h.run_needle3_intent("10 * 5") == "The answer is 50."
+    assert h.run_needle3_intent("calculate 7 minus 3") == "The answer is 4."
+
+def test_b7_time():
+    assert h.run_needle3_intent("what time is it").startswith("The time is")
+
+def test_b8_date():
+    assert h.run_needle3_intent("what is the date today").startswith("Today is")
+
+def test_b9_robot_info():
+    assert "name" in h.run_needle3_intent("what is your name").lower()
+    assert h.ROBOT_VERSION in h.run_needle3_intent("what version are you")
+
+def test_math_rejects_code():
+    # safe eval: names/calls must not execute, must fall back cleanly
+    assert h.run_needle3_intent("calculate __import__('os')") == h.FALLBACK
+    assert h.handle_math("5 / 0") == h.FALLBACK
 
 
 # --- C: validation guards firing against real-needle3-shaped stdout ---
