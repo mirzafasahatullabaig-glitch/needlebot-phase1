@@ -165,6 +165,32 @@ def test_remember_and_recall():
     assert h.run_needle3_intent("what is my favourite") == "I don't know your favourite yet." \
         or "don't know" in h.run_needle3_intent("what is my favourite")
 
+def test_duration_parse():
+    assert h._parse_duration("for 5 minutes") == 300
+    assert h._parse_duration("30 seconds") == 30
+    assert h._parse_duration("2 min") == 120
+    assert h._parse_duration("1 hour") == 3600
+    assert h._parse_duration("no number here") == 0
+
+def test_timer_routes_and_needs_duration():
+    assert h._keyword_intent("set a timer for 5 minutes") == "INTENT_TIMER"
+    assert h._keyword_intent("remind me in 30 seconds") == "INTENT_TIMER"
+    # timer with no duration asks for one
+    assert "how long" in h.handle_timer("set a timer").lower()
+
+def test_timer_fires(monkeypatch):
+    import asyncio
+    real_sleep = asyncio.sleep
+    # make the timer's sleep instant so it fires immediately
+    monkeypatch.setattr(h.asyncio, "sleep", lambda s: real_sleep(0))
+    async def go():
+        h._announce = asyncio.Queue()
+        reply = h.handle_timer("set a timer for 1 second")
+        assert "Timer set" in reply
+        got = await asyncio.wait_for(h._announce.get(), timeout=1.0)
+        assert got == "Time's up!"
+    asyncio.run(go())
+
 def test_math_rejects_code():
     # safe eval: names/calls must not execute, must fall back cleanly
     assert h.run_needle3_intent("calculate __import__('os')") == h.FALLBACK

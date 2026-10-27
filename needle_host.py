@@ -139,7 +139,7 @@ TOOLS_PATH = os.environ.get(
 CONFIDENCE_MIN = 0.70  # needle's reported confidence below this -> fallback
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "2.3.0"
+ROBOT_VERSION = "2.4.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -245,6 +245,40 @@ def handle_joke(_text: str) -> str:
 # restart (single session), which is fine for a companion bot.
 _MEMORY: dict[str, str] = {}
 
+# Timers push their "time's up" message here when they fire; the main BLE loop
+# drains this and sends it to the board. Set in main() to the running loop.
+_announce: "asyncio.Queue[str] | None" = None
+
+
+def _parse_duration(text: str) -> int:
+    """Seconds from 'for 5 minutes', '30 seconds', '2 min'. 0 if none found."""
+    m = re.search(r"(\d+)\s*(h|hour|hr|m|min|minute|s|sec|second)", text, re.IGNORECASE)
+    if not m:
+        return 0
+    n, unit = int(m.group(1)), m.group(2).lower()
+    if unit.startswith("h"):
+        return n * 3600
+    if unit.startswith("m"):
+        return n * 60
+    return n  # seconds
+
+
+def handle_timer(text: str) -> str:
+    secs = _parse_duration(text)
+    if secs <= 0:
+        return "How long should the timer be?"
+    if _announce is None:
+        return "Timers aren't available right now."
+
+    async def _fire():
+        await asyncio.sleep(secs)
+        await _announce.put("Time's up!")
+
+    asyncio.ensure_future(_fire())
+    mins = secs // 60
+    human = f"{mins} minute{'s' if mins != 1 else ''}" if mins else f"{secs} seconds"
+    return f"Timer set for {human}."
+
 
 def handle_remember(text: str) -> str:
     """Store a fact the user states, or recall it.
@@ -286,6 +320,7 @@ INTENT_TEMPLATES = {
     "INTENT_OPEN_APP": handle_open_app,
     "INTENT_DEVICE": handle_device,
     "INTENT_REMEMBER": handle_remember,
+    "INTENT_TIMER": handle_timer,
 }
 FALLBACK = "Sorry, I didn't catch that."
 
@@ -347,7 +382,11 @@ def _keyword_intent(text: str) -> str:
     # "open clock" launches but "what time is it" stays INTENT_TIME.
     if any(v in t for v in ("open", "launch", "start")) and any(n in t for n in APPS):
         return "INTENT_OPEN_APP"
+    # timer: "set a timer", "timer for N minutes", "remind me in N"
+    if "timer" in t or (("remind" in t or "alarm" in t) and _parse_duration(t) > 0):
+        return "INTENT_TIMER"
     # memory: "my X is Y", "remember ...", or recall "what is my X"
+    # (checked after timer so "remind me" doesn't get caught by "remember")
     if re.search(r"\bmy \w+ is ", t) or "remember" in t or re.search(r"what('?s| is) my \w+", t):
         return "INTENT_REMEMBER"
     if "joke" in t:
@@ -415,11 +454,14 @@ def run_needle3_intent(user_prompt: str) -> str:
 
 
 async def main() -> None:
+    global _announce
     print(f"Scanning for {DEVICE_NAME}...")
     device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=20.0)
     if device is None:
         print(f"Device {DEVICE_NAME} not found.")
         return
+
+    _announce = asyncio.Queue()  # timers push "time's up" here
 
     async with BleakClient(device) as client:
         print(f"Connected to {device.address}")
@@ -440,20 +482,26 @@ async def main() -> None:
 
         await client.start_notify(NOTIFY_CHAR_UUID, on_notify)
         print("Listening. Type in the ESP32 Serial Monitor. Ctrl-C to quit.")
+        async def send(text: str) -> None:
+            print(f"[TX response]: {text}")
+            try:
+                await client.write_gatt_char(
+                    WRITE_CHAR_UUID, text.encode("utf-8"), response=True
+                )
+            except Exception as e:  # report instead of silently dropping
+                print(f"[TX ERROR] write failed: {e}")
+
         try:
             while client.is_connected:
+                # a fired timer takes priority, then incoming messages
+                if not _announce.empty():
+                    await send(_announce.get_nowait())
+                    continue
                 try:
                     text = await asyncio.wait_for(queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
-                    continue  # poll connection state, nothing queued
-                response = run_needle3_intent(text)
-                print(f"[TX response]: {response}")
-                try:
-                    await client.write_gatt_char(
-                        WRITE_CHAR_UUID, response.encode("utf-8"), response=True
-                    )
-                except Exception as e:  # report instead of silently dropping
-                    print(f"[TX ERROR] write failed: {e}")
+                    continue  # poll connection state + announce queue
+                await send(run_needle3_intent(text))
         finally:
             await client.stop_notify(NOTIFY_CHAR_UUID)
 
