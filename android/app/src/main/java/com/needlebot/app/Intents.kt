@@ -83,7 +83,7 @@ class Intents(private val ctx: Context) {
         val devicePhrases = listOf("flashlight on", "flashlight off", "torch on", "torch off", "battery")
         if (devicePhrases.any { it in t }) return "INTENT_DEVICE"
         if (listOf("open", "launch", "start").any { it in t } &&
-            listOf("camera", "browser", "maps", "settings").any { it in t }) return "INTENT_OPEN_APP"
+            listOf("open", "launch", "start").any { "$it " in t }) return "INTENT_OPEN_APP"
         if (listOf("search for", "google ", "look up").any { it in t }) return "INTENT_SEARCH"
         if ("timer" in t || (("remind" in t || "alarm" in t) && parseDuration(t) > 0)) return "INTENT_TIMER"
         if (Regex("\\bmy \\w+ is ").containsMatchIn(t) || "remember" in t ||
@@ -157,15 +157,36 @@ class Intents(private val ctx: Context) {
     // --- native device actions (replaces am/termux-api) ---
     private fun handleOpenApp(text: String): String {
         val t = text.lowercase()
-        val intent = when {
+        // System actions that aren't reliably a launchable package label.
+        val sys = when {
             "camera" in t -> Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-            "browser" in t -> Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"))
             "maps" in t -> Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0"))
             "settings" in t -> Intent(android.provider.Settings.ACTION_SETTINGS)
-            else -> return "I can't open that one."
-        }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return try { ctx.startActivity(intent); "Opening it." }
-        catch (e: Exception) { "I couldn't open that." }
+            else -> null
+        }
+        if (sys != null) {
+            return try { ctx.startActivity(sys.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Opening it." }
+            catch (e: Exception) { "I couldn't open that." }
+        }
+        // Otherwise: open any installed app by spoken name.
+        val name = Regex("\\b(open|launch|start)\\b", RegexOption.IGNORE_CASE)
+            .replace(text, "").trim(' ', '.', '!', '?', ',').lowercase()
+        if (name.isEmpty()) return "What should I open?"
+        val launch = findLaunchIntent(name) ?: return "I don't have an app called $name."
+        return try { ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Opening $name." }
+        catch (e: Exception) { "I couldn't open $name." }
+    }
+
+    /** Match a spoken app name to an installed app's launch intent (label
+     *  contains the name, shortest label wins to prefer the closest match). */
+    private fun findLaunchIntent(name: String): Intent? {
+        val pm = ctx.packageManager
+        val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val best = pm.queryIntentActivities(main, 0)
+            .filter { it.loadLabel(pm).toString().lowercase().contains(name) }
+            .minByOrNull { it.loadLabel(pm).length }
+            ?: return null
+        return pm.getLaunchIntentForPackage(best.activityInfo.packageName)
     }
 
     private fun handleDevice(text: String): String {
