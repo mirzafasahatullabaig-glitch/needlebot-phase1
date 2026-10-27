@@ -63,7 +63,7 @@ TOOLS_PATH = os.environ.get(
 CONFIDENCE_MIN = 0.70  # needle's reported confidence below this -> fallback
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "2.0.1"
+ROBOT_VERSION = "2.1.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -274,10 +274,19 @@ def run_needle3_intent(user_prompt: str) -> str:
         intent = _intent_from_needle(result.stdout)
     except FileNotFoundError:
         print("[needle] binary not found, using keyword fallback (PC test mode)")
-        intent = _keyword_intent(user_prompt)
+        intent = ""
     except subprocess.TimeoutExpired:
         print("[needle] timed out")
         intent = ""
+
+    # Needle on this tiny model is often low-confidence on short inputs and
+    # gets rejected. Fall back to the keyword classifier rather than giving up,
+    # so we keep needle's reach but never lose an intent the keywords can catch.
+    if not intent:
+        kw = _keyword_intent(user_prompt)
+        if kw:
+            print(f"[needle] falling back to keyword intent: {kw}")
+            intent = kw
 
     if intent:
         _last_intent = intent  # remember for follow-ups

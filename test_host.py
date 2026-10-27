@@ -114,15 +114,19 @@ def test_math_rejects_code():
 
 # --- C: tool-call JSON parsing against real-needle-shaped stdout ---
 
-def test_c1_empty_call_falls_back(monkeypatch):
-    # needle declined to dispatch (no tools matched) -> no intent
+def test_c1_empty_call_then_keyword(monkeypatch):
+    # needle declined -> keyword fallback catches "joke"
     monkeypatch.setattr(subprocess, "run", _stub(_needle_json(None)))
-    assert h.run_needle3_intent("tell me a joke") == h.FALLBACK
+    assert h.run_needle3_intent("tell me a joke") != h.FALLBACK
+    # but a prompt with no keyword match still falls back
+    assert h.run_needle3_intent("zxcv qwerty") == h.FALLBACK
 
-def test_c2_low_confidence_rejected(monkeypatch):
-    # valid tool call but confidence below threshold (benchmark saw 0.028)
+def test_c2_low_confidence_then_keyword(monkeypatch):
+    # low-confidence needle call -> keyword fallback catches "joke"
     monkeypatch.setattr(subprocess, "run", _stub(_needle_json("intent_joke", 0.028)))
-    assert h.run_needle3_intent("tell me a joke") == h.FALLBACK
+    assert h.run_needle3_intent("tell me a joke") != h.FALLBACK
+    # no keyword match -> still fallback despite the rejected low-conf call
+    assert h.run_needle3_intent("zxcv qwerty") == h.FALLBACK
 
 def test_c3_high_conf_tool_call_passes(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _stub(_needle_json("intent_joke", 0.81)))
