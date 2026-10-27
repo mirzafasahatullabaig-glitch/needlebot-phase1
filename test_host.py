@@ -191,6 +191,27 @@ def test_timer_fires(monkeypatch):
         assert got == "Time's up!"
     asyncio.run(go())
 
+def test_search_builds_safe_url(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", _app_run_recorder(calls))
+    assert h.run_needle3_intent("search for cat videos") == "Searching for cat videos."
+    cmd = calls[0][0]
+    assert cmd[:4] == ["am", "start", "-a", "android.intent.action.VIEW"]
+    assert cmd[-1] == "https://www.google.com/search?q=cat+videos"  # encoded
+    assert calls[0][1].get("shell") is not True
+
+def test_search_query_is_encoded_not_injected(monkeypatch):
+    # shell metacharacters in the query are URL-encoded into one argv item
+    calls = []
+    monkeypatch.setattr(subprocess, "run", _app_run_recorder(calls))
+    h.run_needle3_intent("search for x; rm -rf ~")
+    url = calls[0][0][-1]
+    assert ";" not in url and " " not in url   # encoded, no raw metachars
+    assert url.startswith("https://www.google.com/search?q=")
+
+def test_search_empty_asks():
+    assert "what should i search" in h.handle_search("search for").lower()
+
 def test_math_rejects_code():
     # safe eval: names/calls must not execute, must fall back cleanly
     assert h.run_needle3_intent("calculate __import__('os')") == h.FALLBACK

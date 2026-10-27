@@ -10,5 +10,6 @@
   {"name": "intent_open_app", "description": "The user asks to open, launch, or start an application on the device. Examples: 'open the camera', 'launch the browser', 'start maps'.", "parameters": {"type": "object", "properties": {}}},
   {"name": "intent_device", "description": "The user asks the robot to control a device function: flashlight/torch on or off, volume up or down, check battery, or vibrate. Examples: 'flashlight on', 'volume up', 'what is my battery'.", "parameters": {"type": "object", "properties": {}}},
   {"name": "intent_remember", "description": "The user tells the robot to remember a personal fact, or asks it to recall one. Examples: 'my name is Sam', 'remember I like tea', 'what is my name'.", "parameters": {"type": "object", "properties": {}}},
-  {"name": "intent_timer", "description": "The user asks to set a timer or a reminder for a duration. Examples: 'set a timer for 5 minutes', 'remind me in 30 seconds', 'timer for 2 min'.", "parameters": {"type": "object", "properties": {}}}
+  {"name": "intent_timer", "description": "The user asks to set a timer or a reminder for a duration. Examples: 'set a timer for 5 minutes', 'remind me in 30 seconds', 'timer for 2 min'.", "parameters": {"type": "object", "properties": {}}},
+  {"name": "intent_search", "description": "The user asks to search the web or look something up online. Examples: 'search for cat videos', 'google the weather', 'look up python tutorials'.", "parameters": {"type": "object", "properties": {}}}
 ]

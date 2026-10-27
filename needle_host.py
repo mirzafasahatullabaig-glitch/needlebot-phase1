@@ -14,6 +14,7 @@ import random
 import re
 import subprocess
 from datetime import datetime
+from urllib.parse import quote_plus
 
 from bleak import BleakClient, BleakScanner
 
@@ -123,6 +124,25 @@ def handle_device(text: str) -> str:
     return reply.format(out=r.stdout.strip()) if "{out}" in reply else reply
 
 
+def handle_search(text: str) -> str:
+    """Open a web search for the user's query. The query is URL-encoded and
+    passed as a single argv argument to a fixed browser-open command, so it is
+    never interpreted by a shell. Free input, but safe by construction."""
+    t = text.lower()
+    # strip the trigger words to get the actual query
+    query = re.sub(r"\b(search( for)?|google|look up|find|on the web|online)\b", "", t).strip(" ?.")
+    if not query:
+        return "What should I search for?"
+    url = "https://www.google.com/search?q=" + quote_plus(query)
+    cmd = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url]
+    try:
+        subprocess.run(cmd, timeout=10)  # url is one argv item, no shell
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
+        print(f"[search] failed: {e}")
+        return "I couldn't open a search."
+    return f"Searching for {query}."
+
+
 # Cactus Needle runtime. On the Android/Termux host the binary is ~/needle-android/needle
 # (NOT "needle3") with the model beside it. Override via env for other setups.
 # On the PC neither exists, so the call raises FileNotFoundError and the host
@@ -139,7 +159,7 @@ TOOLS_PATH = os.environ.get(
 CONFIDENCE_MIN = 0.70  # needle's reported confidence below this -> fallback
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "2.4.0"
+ROBOT_VERSION = "2.5.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -321,6 +341,7 @@ INTENT_TEMPLATES = {
     "INTENT_DEVICE": handle_device,
     "INTENT_REMEMBER": handle_remember,
     "INTENT_TIMER": handle_timer,
+    "INTENT_SEARCH": handle_search,
 }
 FALLBACK = "Sorry, I didn't catch that."
 
@@ -382,6 +403,9 @@ def _keyword_intent(text: str) -> str:
     # "open clock" launches but "what time is it" stays INTENT_TIME.
     if any(v in t for v in ("open", "launch", "start")) and any(n in t for n in APPS):
         return "INTENT_OPEN_APP"
+    # web search: explicit search phrasing (after app-launch so "open youtube" wins)
+    if any(w in t for w in ("search for", "search ", "google ", "look up")):
+        return "INTENT_SEARCH"
     # timer: "set a timer", "timer for N minutes", "remind me in N"
     if "timer" in t or (("remind" in t or "alarm" in t) and _parse_duration(t) > 0):
         return "INTENT_TIMER"
