@@ -66,6 +66,12 @@ def test_b9_robot_info():
     assert h.ROBOT_NAME in h.run_needle3_intent("what is your name")
     assert h.ROBOT_VERSION in h.run_needle3_intent("what version are you")
 
+def test_are_you_questions():
+    # "are you X" is robot-info, but "how are you" must stay status
+    assert _routes_to("are you smart", "INTENT_ROBOT_INFO")
+    assert _routes_to("are you a robot", "INTENT_ROBOT_INFO")
+    assert h._keyword_intent("how are you") == "INTENT_STATUS"
+
 def test_followup_reuses_last_intent():
     h._last_intent = ""  # reset session state
     assert _routes_to("tell me a joke", "INTENT_JOKE")   # sets last intent

@@ -24,7 +24,7 @@ NOTIFY_CHAR_UUID = "4fa86c40-43ac-11ed-b878-0242ac120002"  # ESP32 -> us (notify
 WRITE_CHAR_UUID = "4fa86dae-43ac-11ed-b878-0242ac120002"   # us -> ESP32 (write)
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "1.5.0"
+ROBOT_VERSION = "1.6.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -83,6 +83,12 @@ def handle_robot_info(text: str) -> str:
         return f"{ROBOT_NAME}, firmware {ROBOT_VERSION}."
     if "can you do" in t or "help" in t:
         return "I can chat, tell jokes, do quick math, and give you the time or date."
+    if "are you" in t:  # "are you smart/real/a robot/okay..."
+        return _pick([
+            "Smart enough to tell a joke and do your math!",
+            "I'm a small robot doing my best.",
+            "I try to be helpful!",
+        ])
     return f"I'm {ROBOT_NAME}, a little companion robot."
 
 
@@ -174,10 +180,11 @@ def _keyword_intent(text: str) -> str:
         return "INTENT_TIME"
     if "date" in t or "day is" in t or "today" in t:
         return "INTENT_DATE"
-    if any(w in t for w in ("your name", "version", "can you do", "who are you", "what are you")):
-        return "INTENT_ROBOT_INFO"
-    if "status" in t or "how are you" in t:
+    if "status" in t or "how are you" in t:  # before "are you" below
         return "INTENT_STATUS"
+    if any(w in t for w in ("your name", "version", "can you do", "who are you",
+                            "what are you", "are you")):
+        return "INTENT_ROBOT_INFO"
     if any(w in t for w in ("hi", "hello", "hey", "greet")):
         return "INTENT_GREETING"
     return ""
