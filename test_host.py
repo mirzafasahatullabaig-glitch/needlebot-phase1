@@ -66,6 +66,17 @@ def test_b9_robot_info():
     assert h.ROBOT_NAME in h.run_needle3_intent("what is your name")
     assert h.ROBOT_VERSION in h.run_needle3_intent("what version are you")
 
+def test_followup_reuses_last_intent():
+    h._last_intent = ""  # reset session state
+    assert _routes_to("tell me a joke", "INTENT_JOKE")   # sets last intent
+    # a bare follow-up reuses the previous intent instead of falling back
+    assert h.run_needle3_intent("another one") != h.FALLBACK
+    assert h.run_needle3_intent("again") != h.FALLBACK
+
+def test_followup_without_history_falls_back():
+    h._last_intent = ""  # no prior turn
+    assert h.run_needle3_intent("another one") == h.FALLBACK
+
 def test_math_rejects_code():
     # safe eval: names/calls must not execute, must fall back cleanly
     assert h.run_needle3_intent("calculate __import__('os')") == h.FALLBACK

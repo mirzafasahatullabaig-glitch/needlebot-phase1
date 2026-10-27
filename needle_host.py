@@ -24,7 +24,7 @@ NOTIFY_CHAR_UUID = "4fa86c40-43ac-11ed-b878-0242ac120002"  # ESP32 -> us (notify
 WRITE_CHAR_UUID = "4fa86dae-43ac-11ed-b878-0242ac120002"   # us -> ESP32 (write)
 
 ROBOT_NAME = "NeedleBot"
-ROBOT_VERSION = "1.4.0"
+ROBOT_VERSION = "1.5.0"
 
 # Safe arithmetic: evaluate a math AST, no builtins/names -> no code execution.
 _MATH_OPS = {
@@ -144,6 +144,22 @@ def _parse_confidence(out: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+# Last intent routed this session, for resolving bare follow-ups like
+# "another one" / "again". Single-connection bot, so module state is fine.
+_last_intent = ""
+
+# Follow-up phrases that mean "do the previous thing again", carrying no intent
+# of their own.
+_FOLLOWUP_RE = re.compile(
+    r"^\s*(another( one)?|again|one more|more|and( that| it)?\??|keep going|do it again)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_followup(text: str) -> bool:
+    return bool(_FOLLOWUP_RE.match(text))
+
+
 def _keyword_intent(text: str) -> str:
     """Offline fallback classifier for hosts without needle3 (e.g. PC testing).
     Specific intents are checked before generic ones (math before greeting)."""
@@ -180,6 +196,12 @@ def _match_intent(out: str) -> str:
 def run_needle3_intent(user_prompt: str) -> str:
     """Return a response string. Uses needle3 when present; otherwise falls back
     to a built-in keyword classifier so the BLE loop is testable without it."""
+    global _last_intent
+    # Follow-up ("another one", "again") reuses the previous intent, so the bot
+    # keeps context across turns instead of classifying each message blind.
+    if _is_followup(user_prompt) and _last_intent:
+        return _respond(_last_intent, user_prompt)
+
     # Instruct single-code output so the model emits only the label, not prose.
     # This targets the benchmark's prompt-echo at the source.
     prompt = (
@@ -217,6 +239,8 @@ def run_needle3_intent(user_prompt: str) -> str:
         print("[needle3] timed out")
         intent = ""
 
+    if intent:
+        _last_intent = intent  # remember for follow-ups
     return _respond(intent, user_prompt)
 
 
