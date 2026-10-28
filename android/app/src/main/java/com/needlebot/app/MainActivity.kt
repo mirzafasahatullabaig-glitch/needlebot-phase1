@@ -193,10 +193,15 @@ class MainActivity : AppCompatActivity() {
         else
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         ActivityCompat.requestPermissions(this, perms, 1)
+        // call-a-contact perms — requested separately so a denial here never
+        // blocks BLE startup (rc 1); without them INTENT_CALL falls back to the dialer
+        ActivityCompat.requestPermissions(this,
+            arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_CONTACTS), 2)
     }
 
     override fun onRequestPermissionsResult(rc: Int, p: Array<String>, r: IntArray) {
         super.onRequestPermissionsResult(rc, p, r)
+        if (rc != 1) return
         if (r.isNotEmpty() && r.all { it == 0 }) ble.start()
         else setStatus("Bluetooth permission denied.")
     }

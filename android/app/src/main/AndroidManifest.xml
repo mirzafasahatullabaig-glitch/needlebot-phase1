@@ -13,6 +13,10 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- call a contact/number by voice (INTENT_CALL); without CALL_PHONE it
+         falls back to the dialer, so READ_CONTACTS is the one that enables names -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- resolve/launch any installed app by name (open-app intent) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- launch apps while NeedleBot is in the background (BLE commands) -->

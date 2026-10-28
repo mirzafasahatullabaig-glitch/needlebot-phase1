@@ -21,7 +21,7 @@ class Intents(private val ctx: Context) {
             "INTENT_GREETING", "INTENT_STATUS", "INTENT_JOKE", "INTENT_MATH",
             "INTENT_TIME", "INTENT_DATE", "INTENT_ROBOT_INFO", "INTENT_FACT",
             "INTENT_OPEN_APP", "INTENT_DEVICE", "INTENT_REMEMBER",
-            "INTENT_TIMER", "INTENT_SEARCH", "INTENT_FUN",
+            "INTENT_TIMER", "INTENT_SEARCH", "INTENT_FUN", "INTENT_CALL",
         )
         const val FALLBACK = "Sorry, I didn't catch that."
         const val ROBOT_NAME = "NeedleBot"
@@ -76,6 +76,7 @@ class Intents(private val ctx: Context) {
             "INTENT_TIMER" -> handleTimer(text, onAnnounce)
             "INTENT_SEARCH" -> handleSearch(text)
             "INTENT_FUN" -> handleFun(text)
+            "INTENT_CALL" -> handleCall(text)
             else -> FALLBACK
         }
 
@@ -83,6 +84,7 @@ class Intents(private val ctx: Context) {
     private fun keywordIntent(t: String): String {
         val devicePhrases = listOf("flashlight on", "flashlight off", "torch on", "torch off", "battery")
         if (devicePhrases.any { it in t }) return "INTENT_DEVICE"
+        if (Regex("\\b(call|dial|phone)\\b").containsMatchIn(t)) return "INTENT_CALL"
         // "open X in google/browser/web" means search for X, not launch an app
         if (Regex("\\b(in|on) (the )?(google|browser|web|chrome|internet)\\b").containsMatchIn(t) ||
             listOf("search for", "google ", "look up").any { it in t }) return "INTENT_SEARCH"
@@ -122,7 +124,7 @@ class Intents(private val ctx: Context) {
             "name" in t -> "I'm $ROBOT_NAME."
             "version" in t -> "$ROBOT_NAME, version $ROBOT_VERSION."
             "can you do" in t || "help" in t ->
-                "I can chat, tell jokes, do math, open apps, set timers, and more."
+                "I can chat, tell jokes, do math, open apps, make calls, set timers, and more."
             "how old" in t || "age" in t -> "Brand new - I was just built!"
             "are you" in t -> listOf(
                 "Smart enough to tell a joke and do your math!",
@@ -198,6 +200,42 @@ class Intents(private val ctx: Context) {
             .minByOrNull { it.loadLabel(pm).length }
             ?: return null
         return pm.getLaunchIntentForPackage(best.activityInfo.packageName)
+    }
+
+    /** Call a spoken number, or look a name up in contacts and call it.
+     *  Uses ACTION_CALL when CALL_PHONE is granted; otherwise ACTION_DIAL
+     *  (opens the dialer pre-filled, user taps call — needs no permission). */
+    private fun handleCall(text: String): String {
+        val target = Regex("\\b(call|dial|phone)\\b", RegexOption.IGNORE_CASE)
+            .replace(text, "").trim(' ', '.', '!', '?', ',').lowercase()
+        if (target.isEmpty()) return "Who should I call?"
+
+        val digits = target.filter { it.isDigit() || it == '+' }
+        val (number, who) = if (digits.length >= 3) digits to target
+                            else (lookupContact(target) ?: return "I don't have a contact called $target.") to target
+        if (number.isEmpty()) return "I couldn't find a number for $who."
+
+        val canCall = ctx.checkSelfPermission(android.Manifest.permission.CALL_PHONE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        val action = if (canCall) Intent.ACTION_CALL else Intent.ACTION_DIAL
+        return try {
+            launchFresh(Intent(action, Uri.parse("tel:" + Uri.encode(number))))
+            if (canCall) "Calling $who." else "Dialing $who — tap call to connect."
+        } catch (e: Exception) { "I couldn't place that call." }
+    }
+
+    /** First contact whose display name contains [name]; its primary number, or null. */
+    private fun lookupContact(name: String): String? {
+        val uri = android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+        val cols = arrayOf(
+            android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+        ctx.contentResolver.query(
+            uri, cols,
+            "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+            arrayOf("%$name%"), null
+        )?.use { c -> if (c.moveToFirst()) return c.getString(0) }
+        return null
     }
 
     private fun handleDevice(text: String): String {

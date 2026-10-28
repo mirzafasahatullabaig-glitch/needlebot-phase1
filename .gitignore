@@ -4,3 +4,10 @@ __pycache__/
 
 # downloaded CI build artifacts
 apk-out/
+
+# Android build: artifacts + machine-specific toolchain/paths (keep the wrapper)
+.buildtools/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
