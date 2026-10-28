@@ -17,6 +17,8 @@
          falls back to the dialer, so READ_CONTACTS is the one that enables names -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- required to launch the Clock's SET_ALARM / SET_TIMER (else Permission Denial) -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!-- resolve/launch any installed app by name (open-app intent) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- launch apps while NeedleBot is in the background (BLE commands) -->
@@ -37,5 +39,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Phase 3: scripted-flow substrate (Bluetooth toggle, future flows).
+             User must enable it under Settings > Accessibility. -->
+        <service
+            android:name=".NeedleAccessibilityService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
     </application>
 </manifest>

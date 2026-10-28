@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_desc">Lets NeedleBot operate on-screen controls for scripted tasks, like toggling Bluetooth, on your spoken command.</string>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Scripted flows (Bluetooth toggle, etc.). canRetrieveWindowContents is set
+     programmatically in onServiceConnected (AAPT rejects it here under this
+     compileSdk), so this file carries only the event/feedback/flag attrs. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_desc"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
+    android:notificationTimeout="100" />

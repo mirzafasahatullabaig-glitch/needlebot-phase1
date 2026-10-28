@@ -37,16 +37,29 @@ class BleManager(
         (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     private var gatt: BluetoothGatt? = null
     private var writeChar: BluetoothGattCharacteristic? = null
+    private var stopped = false   // true only after stop(): suppresses auto-reconnect
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun start() {
+        stopped = false
         val scanner = adapter?.bluetoothLeScanner ?: run { onStatus("No BLE adapter"); return }
         onStatus("Scanning for $DEVICE_NAME...")
         scanner.startScan(scanCallback)
     }
 
     fun stop() {
+        stopped = true
         try { adapter?.bluetoothLeScanner?.stopScan(scanCallback) } catch (_: Exception) {}
         gatt?.disconnect(); gatt?.close(); gatt = null
+    }
+
+    /** The ESP32 re-advertises after a drop, but the app stopped scanning on
+     *  first connect — so without this it never reconnects and every later
+     *  message is dropped. Close the dead gatt and scan again. */
+    private fun reconnect() {
+        if (stopped) return
+        gatt?.close(); gatt = null; writeChar = null
+        main.postDelayed({ if (!stopped) start() }, 500)
     }
 
     private val scanCallback = object : ScanCallback() {
@@ -65,8 +78,10 @@ class BleManager(
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 onStatus("Connected, discovering...")
                 g.requestMtu(185)   // match the ESP32 setMTU(185)
-            } else {
-                onStatus("Disconnected"); writeChar = null
+            } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+                writeChar = null
+                onStatus(if (stopped) "Disconnected" else "Reconnecting...")
+                reconnect()
             }
         }
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
