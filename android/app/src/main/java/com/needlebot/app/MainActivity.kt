@@ -38,15 +38,49 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chat: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var status: TextView
+    private lateinit var espScope: ScopeView    // CRO-style ESP32 link indicator
+    private var espPulse: android.animation.ValueAnimator? = null
 
-    // palette
-    private val bg = Color.parseColor("#0F1115")
-    private val headerBg = Color.parseColor("#171A21")
-    private val botBubble = Color.parseColor("#232834")
-    private val youBubble = Color.parseColor("#2D6CF6")
-    private val textLight = Color.parseColor("#E6E8EC")
-    private val textMuted = Color.parseColor("#8A909C")
-    private val accent = Color.parseColor("#2D6CF6")
+    // palette — validated dark design system (dataviz skill): warm near-black
+    // surface #1a1a19, one calm blue accent, warm off-white ink. Cohesive, not neon.
+    private val bg = Color.parseColor("#1a1a19")            // surface
+    private val headerBg = Color.parseColor("#1a1a19")
+    private val botBubble = Color.parseColor("#2b2b29")     // raised surface
+    private val youBubble = Color.parseColor("#3987e5")     // accent blue (dark-validated)
+    private val textLight = Color.parseColor("#f0efec")     // primary ink
+    private val textMuted = Color.parseColor("#c3c2b7")     // secondary ink
+    private val accent = Color.parseColor("#3987e5")
+    private val good = Color.parseColor("#0ca30c")          // connected status
+    private val bgTop = Color.parseColor("#222220")         // subtle top-lit gradient
+    private val bgBottom = Color.parseColor("#131312")
+    private val botTop = Color.parseColor("#323230")
+    private val botBottom = Color.parseColor("#232321")
+    private val youTop = Color.parseColor("#4f97ee")
+    private val youBottom = Color.parseColor("#2a6fc9")
+    private val glassFill = Color.parseColor("#14FFFFFF")   // faint light panel over the surface
+
+    /** A glossy top-to-bottom gradient pill/box — the core of the look. */
+    private fun glossy(top: Int, bottom: Int, radius: Float) = GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bottom)
+    ).apply { cornerRadius = radius }
+
+    /** Translucent "glass" panel over the dark gradient (reads as frosted). */
+    private fun glass(radius: Float) = GradientDrawable().apply {
+        cornerRadius = radius
+        setColor(glassFill)
+        setStroke((resources.displayMetrics.density).toInt().coerceAtLeast(1),
+            Color.parseColor("#22FFFFFF"))   // faint top-light edge
+    }
+
+    /** Neon outer glow around a view (shadow tinted with the accent). */
+    private fun glow(v: View, color: Int, radius: Int) {
+        v.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+        v.elevation = radius.toFloat()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            v.outlineAmbientShadowColor = color
+            v.outlineSpotShadowColor = color
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,61 +108,78 @@ class MainActivity : AppCompatActivity() {
     private fun buildUi(): View {
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
+        val gutter = px(16)        // one side gutter used on every row
+        val vpad = px(14)          // one vertical padding used on every bar
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(bgTop, bgBottom))
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
             fitsSystemWindows = true
         }
 
-        // --- header: title + status dot ---
+        // --- header: bot orb + title + pulsing ESP status (raised) ---
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(headerBg)
-            setPadding(px(20), px(16), px(20), px(16))
+            background = glass(0f)
+            elevation = px(8).toFloat()
+            setPadding(gutter, vpad, gutter, vpad)
         }
-        header.addView(TextView(this).apply {
+        val orb = OrbView(this, Color.parseColor("#9BC8F7"), youBottom)
+        glow(orb, accent, px(10))
+        header.addView(orb, LinearLayout.LayoutParams(px(40), px(40)).apply { marginEnd = px(12) })
+        startOrbAnimation(orb)
+
+        // title block: "NeedleBot" with the status line beneath it, takes the slack
+        val titleBlock = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titleBlock.addView(TextView(this).apply {
             text = "NeedleBot"
             setTextColor(textLight)
             textSize = 20f
             setTypeface(typeface, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
         })
         status = TextView(this).apply {
-            text = "● starting…"
+            text = "starting…"
             setTextColor(textMuted)
-            textSize = 13f
+            textSize = 12f
         }
-        header.addView(status)
+        titleBlock.addView(status)
+        header.addView(titleBlock, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+
+        // CRO-style ESP32 link: a scope trace that beats when connected, on the right
+        espScope = ScopeView(this, good, textMuted)
+        header.addView(espScope, LinearLayout.LayoutParams(px(60), px(26)))
+        startEspPulse()   // scope scrolls continuously; `live` gates the waveform
         root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        // --- scrolling chat area ---
+        // --- scrolling chat area (same gutter as the bars) ---
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(px(12), px(12), px(12), px(12))
+            setPadding(gutter, px(12), gutter, px(12))
         }
-        scroll = ScrollView(this).apply { addView(chat) }
+        scroll = ScrollView(this).apply { addView(chat); isFillViewport = true }
         root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
 
-        // --- quick-action buttons ---
+        // --- quick-action buttons (aligned to the gutter, even gaps) ---
         val quick = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(headerBg)
-            setPadding(px(8), px(6), px(8), px(2))
+            background = glass(0f)
+            setPadding(gutter, px(10), gutter, px(6))
         }
         fun chip(label: String, onTap: () -> Unit) = Button(this).apply {
             text = label
             isAllCaps = false
             setTextColor(textLight)
             textSize = 13f
-            background = GradientDrawable().apply {
-                cornerRadius = px(16).toFloat(); setColor(botBubble)
-            }
+            background = glossy(botTop, botBottom, px(16).toFloat())
+            elevation = px(4).toFloat()
+            stateListAnimator = null  // keep our elevation, not the default button one
             setOnClickListener { onTap() }
         }
-        val chipLp = { LinearLayout.LayoutParams(0, px(40), 1f).apply { leftMargin = px(4); rightMargin = px(4) } }
+        val chipGap = px(4)
+        val chipLp = { LinearLayout.LayoutParams(0, px(40), 1f).apply { leftMargin = chipGap; rightMargin = chipGap } }
         var torchState = false
         quick.addView(chip("🔦 Light") {
             torchState = !torchState
@@ -139,12 +190,13 @@ class MainActivity : AppCompatActivity() {
         quick.addView(chip("Clear") { chat.removeAllViews() }, chipLp())
         root.addView(quick, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        // --- input row ---
+        // --- input row (raised bar) ---
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(headerBg)
-            setPadding(px(12), px(10), px(12), px(10))
+            background = glass(0f)
+            elevation = px(8).toFloat()
+            setPadding(gutter, px(10), gutter, px(10))
         }
         val field = EditText(this).apply {
             hint = "Type a message…"
@@ -152,9 +204,9 @@ class MainActivity : AppCompatActivity() {
             setTextColor(textLight)
             textSize = 16f
             setPadding(px(16), px(12), px(16), px(12))
-            background = GradientDrawable().apply {
-                cornerRadius = px(22).toFloat()
-                setColor(botBubble)
+            // inset look: darker fill with a subtle lighter stroke
+            background = glossy(botBottom, botTop, px(22).toFloat()).apply {
+                setStroke(px(1), botTop)
             }
             maxLines = 4
             imeOptions = EditorInfo.IME_ACTION_SEND
@@ -164,13 +216,12 @@ class MainActivity : AppCompatActivity() {
         val send = Button(this).apply {
             text = "Send"
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                cornerRadius = px(22).toFloat()
-                setColor(accent)
-            }
+            setTextColor(Color.parseColor("#06121A"))
+            background = glossy(youTop, youBottom, px(22).toFloat())
+            stateListAnimator = null
             setPadding(px(20), 0, px(20), 0)
         }
+        glow(send, accent, px(8))   // neon cyan glow
         inputRow.addView(send, LinearLayout.LayoutParams(WRAP_CONTENT, px(48)).apply {
             leftMargin = px(8)
         })
@@ -228,10 +279,12 @@ class MainActivity : AppCompatActivity() {
             setTextColor(if (mine) Color.WHITE else textLight)
             textSize = 16f
             setPadding(px(14), px(10), px(14), px(10))
-            background = GradientDrawable().apply {
-                cornerRadius = px(18).toFloat()
-                setColor(if (mine) youBubble else botBubble)
-            }
+            // glossy gradient bubble, lifted off the background with a shadow
+            background = glossy(
+                if (mine) youTop else botTop,
+                if (mine) youBottom else botBottom,
+                px(18).toFloat())
+            if (mine) glow(this, accent, px(6)) else elevation = px(3).toFloat()
         }
         val lp = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
             topMargin = px(4); bottomMargin = px(4)
@@ -246,12 +299,45 @@ class MainActivity : AppCompatActivity() {
     /** Connection status in the header (and a muted centered line in chat). */
     private fun setStatus(line: String) = runOnUiThread {
         val connected = line.startsWith("Ready") || line.startsWith("Connected")
-        status.text = "● " + line
-        status.setTextColor(if (connected) accent else textMuted)
+        status.text = line
+        status.setTextColor(if (connected) good else textMuted)
+        espScope.live = connected   // scope beats when linked, flatlines otherwise
+    }
+
+    private var orbAnim: android.animation.ValueAnimator? = null
+
+    /** Spin the sphere (highlight orbits) with a gentle breathe. Honors reduced-motion. */
+    private fun startOrbAnimation(orb: OrbView) {
+        val reduced = try {
+            android.provider.Settings.Global.getFloat(
+                contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+        } catch (e: Exception) { false }
+        if (reduced) { orb.phase = 0.15f; return }
+        orbAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 3000                       // one bob/blink cycle per 3s
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener { orb.phase = it.animatedValue as Float }
+            start()
+        }
+    }
+
+    /** Scroll the scope trace continuously (the waveform only shows when live). */
+    private fun startEspPulse() {
+        if (espPulse?.isRunning == true) return
+        espPulse = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1400                 // one heartbeat sweep per 1.4s
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener { espScope.t = it.animatedValue as Float }
+            start()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        orbAnim?.cancel()
+        espPulse?.cancel()
         ble.stop()
     }
 }
