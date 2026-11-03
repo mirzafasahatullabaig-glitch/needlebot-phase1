@@ -24,6 +24,7 @@ class BleManager(
     private val ctx: Context,
     private val onText: (String) -> Unit,       // user text received from ESP32
     private val onStatus: (String) -> Unit,     // UI status updates
+    private val onWake: () -> Unit = {},         // ESP mic detected speech -> start phone STT
 ) {
     companion object {
         const val DEVICE_NAME = "NeedleBot-S3"
@@ -100,7 +101,9 @@ class BleManager(
         }
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
             val raw = c.value?.toString(Charsets.UTF_8) ?: return
-            val text = try { JSONObject(raw).optString("text", "") } catch (e: Exception) { "" }
+            val obj = try { JSONObject(raw) } catch (e: Exception) { return }
+            if (obj.optInt("wake", 0) == 1) { onWake(); return }
+            val text = obj.optString("text", "")
             if (text.isNotEmpty()) onText(text)
         }
     }

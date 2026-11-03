@@ -33,6 +33,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    // OkHttp for the local needle --serve HTTP calls
+    // OkHttp for the local needle --serve HTTP calls + Vosk model download
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Offline speech-to-text for the ESP Wi-Fi audio stream
+    implementation("com.alphacephei:vosk-android:0.3.47")
 }

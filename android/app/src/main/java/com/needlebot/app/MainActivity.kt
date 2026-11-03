@@ -87,7 +87,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(buildUi())
 
         intents = Intents(this)
-        ble = BleManager(this, onText = { handleText(it, fromBle = true) }, onStatus = ::setStatus)
+        ble = BleManager(this, onText = { handleText(it, fromBle = true) }, onStatus = ::setStatus,
+            onWake = { runOnUiThread { startVoiceCapture() } })
         requestPermissions()
         requestOverlayPermission()
     }
@@ -255,6 +256,33 @@ class MainActivity : AppCompatActivity() {
         if (rc != 1) return
         if (r.isNotEmpty() && r.all { it == 0 }) ble.start()
         else setStatus("Bluetooth permission denied.")
+    }
+
+    private val vosk by lazy { VoskStt(this) }
+    @Volatile private var voiceBusy = false
+
+    /** ESP touch pad pressed (BLE wake) -> connect to the ESP's Wi-Fi audio
+     *  stream, transcribe it offline with Vosk while the pad is held, then run
+     *  the text through the same pipeline as a BLE message (reply goes to ESP).
+     *  The ESP mic is the mic; the phone only transcribes. */
+    private fun startVoiceCapture() {
+        android.util.Log.i("NeedleVoice", "wake received -> startVoiceCapture (busy=$voiceBusy)")
+        if (voiceBusy) return
+        voiceBusy = true
+        setStatus("Listening (ESP mic)...")
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                try { vosk.transcribeStream() }
+                catch (e: Exception) {
+                    android.util.Log.e("NeedleVoice", "transcribe failed", e)
+                    runOnUiThread { setStatus("Voice error: ${e.message}") }; ""
+                }
+            }
+            voiceBusy = false
+            android.util.Log.i("NeedleVoice", "transcript = '$text'")
+            if (text.isNotBlank()) handleText(text, fromBle = true)
+            else setStatus("Didn't catch that.")
+        }
     }
 
     /** A message to classify, from BLE or the on-screen input. */

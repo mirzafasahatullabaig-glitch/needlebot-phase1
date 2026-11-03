@@ -9,6 +9,13 @@
 #include <driver/i2s.h>   // Arduino-ESP32 3.x ships the IDF I2S driver
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>  // install "Adafruit SSD1306" (+ GFX) in Library Manager
+#include <WiFi.h>
+
+// Wi-Fi for the audio stream. NOTE: inlined here for single-file upload — do
+// NOT commit real credentials; put your real network name/password only to
+// flash, then blank them before pushing (this file is tracked in git).
+#define WIFI_SSID  "YOUR_WIFI_SSID"
+#define WIFI_PASS  "YOUR_WIFI_PASSWORD"
 
 // --- INMP441 I2S mic (SD=GPIO6, WS=GPIO5, SCK=GPIO4, L/R=GND => left slot) ---
 #define MIC_SD   6
@@ -16,6 +23,18 @@
 #define MIC_SCK  4
 #define MIC_PORT I2S_NUM_0
 #define MIC_SR   16000   // 16 kHz is plenty for speech
+
+// --- Push button = push-to-talk. Wire button between this GPIO and GND;
+// internal pull-up makes it HIGH when released, LOW while pressed.
+// GPIO10 (moved off GPIO1, a boot/strapping-adjacent pin that flickered). ---
+#define BTN_PIN  10
+#define BTN_PRESSED (digitalRead(BTN_PIN) == LOW)
+
+// --- Wi-Fi audio stream: raw 16-bit mono PCM @ 16 kHz on this TCP port while
+// pad 1 is held. A client (phone, or a PC test script) connects and reads it. ---
+#define AUDIO_PORT 7001
+static WiFiServer audioServer(AUDIO_PORT);
+static WiFiClient audioClient;
 
 // --- SSD1306 OLED on I2C (SDA=GPIO7, SCL=GPIO15, addr 0x3C) ---
 // S3 has no GPIO22; any free pin works for I2C. 7 sits by the mic pins. -1 = no reset.
@@ -119,6 +138,67 @@ static uint32_t micLevel() {
   return (uint32_t)peak;
 }
 
+// Stream mic audio to the TCP client as raw 16-bit mono PCM @ 16 kHz while the
+// button is held. The INMP441's 24-bit sample (buf[i] >> 8) carries a big,
+// wandering DC offset, so we subtract the block mean first (same as micLevel)
+// then scale the AC part down to int16. Scaled so ~8M speech peaks land near
+// half-scale (~16k), leaving headroom instead of slamming the clip rail: a
+// railed square wave is what made Vosk hear only noise and return "".
+// shortcut: fixed MIC_SHIFT tuned to observed 1M-8M peaks; if speech is too
+// quiet lower the shift, if it clips raise it.
+#define MIC_SHIFT 9   // divide the DC-removed 24-bit value by 512
+
+// Show a big centred banner on the OLED (used for LISTENING while capturing).
+static void oledBanner(const char *msg) {
+  oled.clearDisplay();
+  oled.setTextSize(2);
+  oled.setCursor(0, 24);
+  oled.println(msg);
+  oled.setTextSize(1);
+  oled.display();
+}
+
+// True while the button is held, tolerating contact bounce: only reports
+// "released" after the pin reads HIGH continuously for ~60 ms. A momentary
+// flicker mid-hold no longer ends the capture.
+static bool buttonHeld() {
+  if (BTN_PRESSED) return true;
+  uint32_t t0 = millis();
+  while (millis() - t0 < 60) {
+    if (BTN_PRESSED) return true;   // bounced back down -> still held
+    delay(5);
+  }
+  return false;                      // HIGH for 60 ms straight -> truly released
+}
+
+static void streamAudioWhileHeld() {
+  Serial.println("[AUDIO] streaming (button held)");
+  oledBanner("LISTENING");
+  int32_t buf[256];
+  int16_t pcm[256];
+  size_t totalBytes = 0;
+  while (buttonHeld() && audioClient.connected()) {
+    size_t nbytes = 0;
+    i2s_read(MIC_PORT, buf, sizeof(buf), &nbytes, portMAX_DELAY);
+    size_t n = nbytes / sizeof(int32_t);
+    int64_t mean = 0;                        // remove this block's DC offset
+    for (size_t i = 0; i < n; i++) mean += buf[i] >> 8;
+    if (n) mean /= (int64_t)n;
+    for (size_t i = 0; i < n; i++) {
+      int32_t s = (int32_t)(((buf[i] >> 8) - mean) >> MIC_SHIFT);
+      if (s > 32767) s = 32767;              // saturate, don't wrap
+      else if (s < -32768) s = -32768;
+      pcm[i] = (int16_t)s;
+    }
+    if (audioClient.write((uint8_t *)pcm, n * sizeof(int16_t)) == 0) break;  // client gone
+    totalBytes += n * sizeof(int16_t);
+  }
+  audioClient.flush();
+  audioClient.stop();                        // clean end-of-stream for the reader
+  Serial.printf("[AUDIO] stopped (released), sent %u bytes\n", (unsigned)totalBytes);
+  screenDirty = true;                        // force the normal screen back
+}
+
 // Draw the whole 128x64 screen: header, BLE state + mic bar, last message
 // sent and last reply received. println wraps long lines on its own.
 static void drawScreen(uint32_t micLvl) {
@@ -144,6 +224,20 @@ void setup() {
 
   micBegin();
   Serial.println("[MIC] INMP441 I2S ready");
+
+  pinMode(BTN_PIN, INPUT_PULLUP);   // button to GND: HIGH released, LOW pressed
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("[WiFi] connecting");
+  for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) { delay(250); Serial.print("."); }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[WiFi] connected, IP %s  audio port %d\n",
+                  WiFi.localIP().toString().c_str(), AUDIO_PORT);
+    audioServer.begin();
+  } else {
+    Serial.println("\n[WiFi] FAILED - audio stream disabled, BLE text still works");
+  }
 
   Wire.begin(OLED_SDA, OLED_SCL);
   if (oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
@@ -201,6 +295,43 @@ void loop() {
     Serial.println(payload);
     lastTx = line;
     screenDirty = true;
+  }
+
+  // Push-to-talk: hold the button to stream mic audio over Wi-Fi to the phone.
+  // Press -> BLE wake tells the app to open the audio socket -> we wait briefly
+  // for it to connect, then stream until release (walkie-talkie).
+  static bool waked = false;
+  if (BTN_PRESSED && WiFi.status() == WL_CONNECTED) {
+    if (!waked) {
+      if (deviceConnected) {
+        notifyChar->setValue("{\"wake\":1}");
+        notifyChar->notify();
+        Serial.println("[WAKE] sent (button pressed)");
+      } else {
+        Serial.println("[WAKE] button pressed but BLE not connected - app can't be told");
+      }
+      waked = true;
+      // Give the phone up to ~2s to receive the wake and open the TCP socket.
+      // Don't abort on a button bounce; only a debounced release stops us.
+      uint32_t t0 = millis();
+      while (buttonHeld() && millis() - t0 < 2000 &&
+             (!audioClient || !audioClient.connected())) {
+        audioClient = audioServer.available();
+        delay(20);
+      }
+    }
+    if (audioClient && audioClient.connected()) {
+      streamAudioWhileHeld();   // blocks until debounced release
+      waked = false;
+      return;
+    } else if (!buttonHeld()) {
+      Serial.println("[AUDIO] released before phone connected (or no client)");
+      waked = false;
+    } else {
+      Serial.println("[AUDIO] no client connected - phone on same WiFi + app open + BLE connected?");
+    }
+  } else if (!buttonHeld()) {
+    waked = false;              // button truly released -> re-arm for next press
   }
 
   // Redraw once a second (for the live mic bar) or whenever a message changed.
