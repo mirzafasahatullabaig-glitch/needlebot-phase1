@@ -54,27 +54,58 @@ static String lastTx = "";   // last message we sent to the phone
 static String lastRx = "";   // last reply received from the phone
 static bool screenDirty = true;
 
+static void toast(const char *msg);   // defined below, used by the callbacks
+
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *server) override {
     deviceConnected = true;
     Serial.println("[BLE] Client connected");
+    toast("phone linked");
   }
   void onDisconnect(BLEServer *server) override {
     deviceConnected = false;
     Serial.println("[BLE] Client disconnected, re-advertising");
     server->startAdvertising();  // auto-restart advertising on disconnect
+    toast("phone lost");
   }
 };
+
+// Pull the string value out of a one-key JSON object {"key":"...."} the app
+// sends. Minimal (no JSON lib): finds "key":" then copies to the next unescaped
+// quote. Returns "" if the key isn't present. Good enough for our own payloads.
+static String jsonStrField(const String &s, const char *key) {
+  String needle = String("\"") + key + "\":\"";
+  int a = s.indexOf(needle);
+  if (a < 0) return "";
+  a += needle.length();
+  String out;
+  for (int i = a; i < (int)s.length(); i++) {
+    char c = s[i];
+    if (c == '\\' && i + 1 < (int)s.length()) { out += s[++i]; continue; }  // keep escaped char
+    if (c == '"') break;
+    out += c;
+  }
+  return out;
+}
 
 class WriteCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *chr) override {
     String value = chr->getValue();  // Arduino-ESP32 3.x returns String
-    if (value.length() > 0) {
-      Serial.print("[RX AI Response]: ");
-      Serial.println(value);
-      lastRx = value;
-      screenDirty = true;
+    if (value.length() == 0) return;
+    // Phone-notification mirror: {"notif":"App: text"} -> toast it, don't treat
+    // it as an AI reply. Anything else is a reply (plain text, back-compatible).
+    String n = jsonStrField(value, "notif");
+    if (n.length()) {
+      Serial.print("[NOTIF]: ");
+      Serial.println(n);
+      toast(n.c_str());
+      return;
     }
+    Serial.print("[RX AI Response]: ");
+    Serial.println(value);
+    lastRx = value;
+    toast("reply in");
+    screenDirty = true;
   }
 };
 
@@ -148,13 +179,100 @@ static uint32_t micLevel() {
 // quiet lower the shift, if it clips raise it.
 #define MIC_SHIFT 9   // divide the DC-removed 24-bit value by 512
 
-// Show a big centred banner on the OLED (used for LISTENING while capturing).
-static void oledBanner(const char *msg) {
+// --- Toast notifications: a short message that pops over the bottom of the
+// screen then fades back to the face after a couple of seconds. toast() just
+// sets state; drawFace() renders it. Non-blocking so BLE/Wi-Fi keep running. ---
+static String toastMsg = "";
+static uint32_t toastUntil = 0;   // millis() when the toast expires
+static void toast(const char *msg) {
+  toastMsg = msg;
+  toastUntil = millis() + 2200;
+  screenDirty = true;
+}
+
+// --- Idle robot face (echoes the app's OrbView). Two eyes that blink, an
+// antenna that pulses when connected, and a mouth. Status dots + mic bar sit
+// under it; the last reply scrolls along the bottom unless a toast is up. ---
+static uint32_t lastBlink = 0;
+static bool blinking = false;
+
+// Draw one eye: open = filled circle, blinking = a flat line.
+static void drawEye(int cx, int cy, bool open) {
+  if (open) oled.fillCircle(cx, cy, 6, SSD1306_WHITE);
+  else      oled.drawFastHLine(cx - 6, cy, 13, SSD1306_WHITE);
+}
+
+static void drawFace(uint32_t micLvl) {
   oled.clearDisplay();
-  oled.setTextSize(2);
-  oled.setCursor(0, 24);
-  oled.println(msg);
+
+  // Blink: shut for ~120ms roughly every 3s (cheap, time-based, no RNG state).
+  uint32_t now = millis();
+  if (!blinking && now - lastBlink > 3000) { blinking = true;  lastBlink = now; }
+  if (blinking  && now - lastBlink > 120)  { blinking = false; lastBlink = now; }
+
+  // Antenna: dot on a stalk, filled (pulsing) only while BLE is connected.
+  oled.drawFastVLine(64, 2, 6, SSD1306_WHITE);
+  bool pulse = deviceConnected && ((now / 400) & 1);
+  if (pulse) oled.fillCircle(64, 2, 2, SSD1306_WHITE);
+  else       oled.drawCircle(64, 2, 2, SSD1306_WHITE);
+
+  // Head outline + eyes + mouth.
+  oled.drawRoundRect(40, 10, 48, 34, 6, SSD1306_WHITE);
+  drawEye(54, 24, !blinking);
+  drawEye(74, 24, !blinking);
+  // Mouth widens with mic level so the face "reacts" to sound.
+  int mw = 6 + (int)(micLvl / 2000);
+  if (mw > 20) mw = 20;
+  oled.drawFastHLine(64 - mw / 2, 37, mw, SSD1306_WHITE);
+
+  // Status dots, top-left: BLE then Wi-Fi (filled = up, hollow = down).
+  if (deviceConnected) oled.fillCircle(4, 4, 3, SSD1306_WHITE);
+  else                 oled.drawCircle(4, 4, 3, SSD1306_WHITE);
+  if (WiFi.status() == WL_CONNECTED) oled.fillCircle(4, 14, 3, SSD1306_WHITE);
+  else                               oled.drawCircle(4, 14, 3, SSD1306_WHITE);
+
+  // Mic bar up the right edge (vertical VU), 0..~40000 -> 0..40px.
+  int h = micLvl / 1000;
+  if (h > 40) h = 40;
+  oled.fillRect(122, 44 - h, 4, h, SSD1306_WHITE);
+
+  // Bottom strip: a toast if one is live, else the last reply text.
+  if (toastMsg.length() && (int32_t)(toastUntil - now) > 0) {
+    oled.drawRoundRect(0, 48, 128, 16, 3, SSD1306_WHITE);
+    oled.setCursor(4, 52);
+    oled.print(toastMsg.substring(0, 20));   // ~20 chars fit in the box at 6px/char
+  } else {
+    toastMsg = "";                       // expired: clear so idle text shows
+    oled.setCursor(0, 52);
+    if (lastRx.length()) { oled.print("< "); oled.print(lastRx); }
+    else                   oled.print("ready");
+  }
+  oled.display();
+}
+
+// LISTENING screen: a scrolling CRO-style waveform driven by live mic peaks,
+// echoing the app's ScopeView. `lvl` is this block's peak (0..~40000); we push
+// it as one column and scroll left. Keeps its own trace buffer (per-call, reset
+// each capture by streamAudioWhileHeld calling scopeReset()).
+static uint8_t scope[128];
+static void scopeReset() { for (int i = 0; i < 128; i++) scope[i] = 0; }
+static void drawScope(uint32_t lvl) {
+  for (int i = 0; i < 127; i++) scope[i] = scope[i + 1];   // scroll left
+  int h = lvl / 1200;                                      // 0..~33
+  if (h > 33) h = 33;
+  scope[127] = (uint8_t)h;
+
+  oled.clearDisplay();
   oled.setTextSize(1);
+  oled.setCursor(0, 0);
+  oled.print("LISTENING");
+  oled.drawFastHLine(0, 11, 128, SSD1306_WHITE);
+  // Mirror each column around the centre line for a scope look.
+  int mid = 40;
+  for (int i = 0; i < 128; i++) {
+    int h2 = scope[i];
+    oled.drawFastVLine(i, mid - h2, 2 * h2 + 1, SSD1306_WHITE);
+  }
   oled.display();
 }
 
@@ -173,10 +291,11 @@ static bool buttonHeld() {
 
 static void streamAudioWhileHeld() {
   Serial.println("[AUDIO] streaming (button held)");
-  oledBanner("LISTENING");
+  scopeReset();
   int32_t buf[256];
   int16_t pcm[256];
   size_t totalBytes = 0;
+  uint32_t lastScope = 0;
   while (buttonHeld() && audioClient.connected()) {
     size_t nbytes = 0;
     i2s_read(MIC_PORT, buf, sizeof(buf), &nbytes, portMAX_DELAY);
@@ -184,38 +303,32 @@ static void streamAudioWhileHeld() {
     int64_t mean = 0;                        // remove this block's DC offset
     for (size_t i = 0; i < n; i++) mean += buf[i] >> 8;
     if (n) mean /= (int64_t)n;
+    int32_t peak = 0;                        // block peak -> scope column
     for (size_t i = 0; i < n; i++) {
-      int32_t s = (int32_t)(((buf[i] >> 8) - mean) >> MIC_SHIFT);
+      int32_t ac = (int32_t)((buf[i] >> 8) - mean);
+      int32_t s = ac >> MIC_SHIFT;
       if (s > 32767) s = 32767;              // saturate, don't wrap
       else if (s < -32768) s = -32768;
       pcm[i] = (int16_t)s;
+      int32_t a = ac < 0 ? -ac : ac;
+      if (a > peak) peak = a;
     }
     if (audioClient.write((uint8_t *)pcm, n * sizeof(int16_t)) == 0) break;  // client gone
     totalBytes += n * sizeof(int16_t);
+    // Redraw the scope ~every 40ms (not every DMA block) so SPI I/O to the OLED
+    // doesn't starve the audio read and cause gaps/underruns in the stream.
+    if (millis() - lastScope > 40) { lastScope = millis(); drawScope((uint32_t)peak); }
   }
   audioClient.flush();
   audioClient.stop();                        // clean end-of-stream for the reader
   Serial.printf("[AUDIO] stopped (released), sent %u bytes\n", (unsigned)totalBytes);
+  toast("sent");
   screenDirty = true;                        // force the normal screen back
 }
 
-// Draw the whole 128x64 screen: header, BLE state + mic bar, last message
-// sent and last reply received. println wraps long lines on its own.
-static void drawScreen(uint32_t micLvl) {
-  oled.clearDisplay();
-  oled.setCursor(0, 0);
-  oled.print("NeedleBot  ");
-  oled.println(deviceConnected ? "[on]" : "[adv]");
-  // mic bar: 0..~50000 mapped to full width
-  int w = micLvl / 400;
-  if (w > 127) w = 127;
-  oled.fillRect(0, 10, w, 4, SSD1306_WHITE);
-  oled.setCursor(0, 18);
-  oled.print(">");  oled.println(lastTx);   // what we sent
-  oled.setCursor(0, 38);
-  oled.print("<");  oled.println(lastRx);   // what came back
-  oled.display();
-}
+// The idle screen is the robot face (defined above). Kept as drawScreen so the
+// two existing call sites (setup, loop) don't change.
+static void drawScreen(uint32_t micLvl) { drawFace(micLvl); }
 
 void setup() {
   Serial.begin(115200);
@@ -329,6 +442,7 @@ void loop() {
       waked = false;
     } else {
       Serial.println("[AUDIO] no client connected - phone on same WiFi + app open + BLE connected?");
+      toast("no audio link");
     }
   } else if (!buttonHeld()) {
     waked = false;              // button truly released -> re-arm for next press

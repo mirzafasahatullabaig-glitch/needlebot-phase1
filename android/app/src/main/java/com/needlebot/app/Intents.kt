@@ -51,8 +51,37 @@ class Intents(private val ctx: Context) {
         "Why was the robot tired? It had a hard drive.",
     )
 
+    // Vosk's small en-US model has no brand names and mis-hears clipped words,
+    // so it never emits "whatsapp" or "youtube" and turns "cam" into other
+    // words. Rewrite the common mis-hearings to the word the matchers expect,
+    // before any classification. Whole-word, case-insensitive. Add a line here
+    // when a new app/word is misheard — cheaper than a bigger speech model.
+    // Always-safe rewrites: these phrasings are never meant literally.
+    private val speechFixes = listOf(
+        Regex("\\bwhat'?s app\\b", RegexOption.IGNORE_CASE) to "whatsapp",
+        Regex("\\bwhats app\\b", RegexOption.IGNORE_CASE) to "whatsapp",
+        Regex("\\byou tube\\b", RegexOption.IGNORE_CASE) to "youtube",
+        Regex("\\bu tube\\b", RegexOption.IGNORE_CASE) to "youtube",
+        Regex("\\binsta gram\\b", RegexOption.IGNORE_CASE) to "instagram",
+    )
+    // Ambiguous rewrites: only when the sentence is clearly an app-open command,
+    // so a plain "what's up" greeting or "stay calm" isn't hijacked.
+    private val openCue = Regex("\\b(open|launch|start)\\b", RegexOption.IGNORE_CASE)
+    private val speechFixesOnOpen = listOf(
+        Regex("\\bwhat'?s up\\b", RegexOption.IGNORE_CASE) to "whatsapp",
+        Regex("\\b(cam|camm|calm)\\b", RegexOption.IGNORE_CASE) to "camera",
+    )
+    private fun fixSpeech(text: String): String {
+        var out = text
+        for ((re, to) in speechFixes) out = re.replace(out, to)
+        if (openCue.containsMatchIn(out))
+            for ((re, to) in speechFixesOnOpen) out = re.replace(out, to)
+        return out
+    }
+
     /** Main entry: classify (needle intent passed in, "" if none) then respond. */
-    fun respond(text: String, needleIntent: String, onAnnounce: (String) -> Unit): String {
+    fun respond(rawText: String, needleIntent: String, onAnnounce: (String) -> Unit): String {
+        val text = fixSpeech(rawText)
         val lower = text.lowercase().trim()
         if (isFollowup(lower) && lastIntent.isNotEmpty()) {
             return dispatch(lastIntent, text, onAnnounce)
@@ -130,7 +159,8 @@ class Intents(private val ctx: Context) {
         if ("time" in t || "clock" in t) return "INTENT_TIME"
         if ("date" in t || "today" in t) return "INTENT_DATE"
         if ("status" in t || "how are you" in t) return "INTENT_STATUS"
-        if (listOf("your name", "version", "can you do", "who are you", "are you", "how old", "age")
+        if (listOf("your name", "version", "can you do", "who are you", "are you", "how old", "age",
+                   "command", "cheat", "help", "what can you say")
                 .any { it in t }) return "INTENT_ROBOT_INFO"
         if (listOf("hi", "hello", "hey", "greet").any { it in t }) return "INTENT_GREETING"
         if (facts.keys.any { it in t }) return "INTENT_FACT"
@@ -154,8 +184,13 @@ class Intents(private val ctx: Context) {
         return when {
             "name" in t -> "I'm $ROBOT_NAME."
             "version" in t -> "$ROBOT_NAME, version $ROBOT_VERSION."
-            "can you do" in t || "help" in t ->
-                "I can chat, do math, open apps, make calls, send texts, set alarms, timers and calendar events, take notes, control music and volume, check the weather, toggle Bluetooth, and more."
+            "can you do" in t || "help" in t || "command" in t || "cheat" in t ||
+            "what can you say" in t ->
+                "Try: \"open camera\" / \"open whatsapp\" · \"call Mom\" · " +
+                "\"text Sam hi\" · \"set alarm 7am\" · \"timer 5 minutes\" · " +
+                "\"what's the time\" · \"5 times 8\" · \"weather\" · " +
+                "\"bluetooth on\" · \"flashlight on\" · \"roll a dice\" · " +
+                "\"tell me a joke\" · \"remember my car is blue\"."
             "how old" in t || "age" in t -> "Brand new - I was just built!"
             "are you" in t -> listOf(
                 "Smart enough to tell a joke and do your math!",

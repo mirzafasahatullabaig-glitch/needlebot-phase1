@@ -40,6 +40,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Mirror selected phone notifications to the ESP bot's OLED.
+             User must enable it under Settings > Notifications > Notification
+             access (device-specific path). -->
+        <service
+            android:name=".NotifMirrorService"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- Phase 3: scripted-flow substrate (Bluetooth toggle, future flows).
              User must enable it under Settings > Accessibility. -->
         <service

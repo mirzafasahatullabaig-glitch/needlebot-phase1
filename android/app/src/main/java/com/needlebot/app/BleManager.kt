@@ -27,12 +27,18 @@ class BleManager(
     private val onWake: () -> Unit = {},         // ESP mic detected speech -> start phone STT
 ) {
     companion object {
+        // The live instance, so the NotificationListenerService (a separate
+        // component) can push phone notifications to the ESP without its own BLE.
+        @Volatile var current: BleManager? = null
+
         const val DEVICE_NAME = "NeedleBot-S3"
         val SERVICE_UUID: UUID = UUID.fromString("4fa86970-43ac-11ed-b878-0242ac120002")
         val NOTIFY_UUID: UUID = UUID.fromString("4fa86c40-43ac-11ed-b878-0242ac120002")
         val WRITE_UUID: UUID = UUID.fromString("4fa86dae-43ac-11ed-b878-0242ac120002")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
+
+    init { current = this }
 
     private val adapter: BluetoothAdapter? =
         (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter

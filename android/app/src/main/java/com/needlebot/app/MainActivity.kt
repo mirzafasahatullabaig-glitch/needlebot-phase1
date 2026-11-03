@@ -91,6 +91,23 @@ class MainActivity : AppCompatActivity() {
             onWake = { runOnUiThread { startVoiceCapture() } })
         requestPermissions()
         requestOverlayPermission()
+        requestNotificationAccess()
+    }
+
+    /** Notification mirroring: the bot shows selected phone notifications on its
+     *  OLED. Needs the special "Notification access" grant; send the user there
+     *  once if it isn't enabled yet. */
+    private fun requestNotificationAccess() {
+        val enabled = android.provider.Settings.Secure.getString(
+            contentResolver, "enabled_notification_listeners")
+            ?.contains(packageName) == true
+        if (!enabled) {
+            setStatus("Enable 'Notification access' for NeedleBot so the bot can show phone alerts.")
+            try {
+                startActivity(android.content.Intent(
+                    "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+            } catch (_: Exception) { /* some ROMs lack the direct action; ignore */ }
+        }
     }
 
     /** "Display over other apps" — without it Android blocks launching apps
