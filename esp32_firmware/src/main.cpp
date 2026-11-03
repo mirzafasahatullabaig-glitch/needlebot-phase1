@@ -96,24 +96,27 @@ static void micBegin() {
   i2s_set_pin(MIC_PORT, &pins);
 }
 
-// Mean absolute amplitude of one DMA block — a simple level meter.
+// Voice level of one DMA block. The INMP441 has a big, slowly wandering DC
+// offset, so subtract this block's mean first. Speech shows up as the peak
+// deviation within the block, not the average, so return the max — that moves
+// clearly on "hello" while a quiet block stays low. All per-block (no state
+// carried across calls, so nothing can diverge) and integer-only.
 static uint32_t micLevel() {
   int32_t buf[256];
   size_t nbytes = 0;
   i2s_read(MIC_PORT, buf, sizeof(buf), &nbytes, portMAX_DELAY);
   size_t n = nbytes / sizeof(int32_t);
   if (n == 0) return 0;
-  // Remove the mic's DC bias first, else a quiet mic reads as a big wandering
-  // number: take the block mean, then the mean absolute deviation from it.
   int64_t mean = 0;
   for (size_t i = 0; i < n; i++) mean += buf[i] >> 8;  // 24-bit in a 32-bit slot
   mean /= (int64_t)n;
-  int64_t sum = 0;
+  int64_t peak = 0;
   for (size_t i = 0; i < n; i++) {
     int64_t d = (buf[i] >> 8) - mean;
-    sum += d < 0 ? -d : d;
+    if (d < 0) d = -d;
+    if (d > peak) peak = d;
   }
-  return (uint32_t)(sum / n);
+  return (uint32_t)peak;
 }
 
 // Draw the whole 128x64 screen: header, BLE state + mic bar, last message
