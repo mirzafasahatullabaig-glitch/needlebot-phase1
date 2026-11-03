@@ -270,16 +270,57 @@ class Intents(private val ctx: Context) {
         catch (e: Exception) { false }   // no handler -> report it; never crash / drop BLE
     }
 
-    /** Match a spoken app name to an installed app's launch intent (label
-     *  contains the name, shortest label wins to prefer the closest match). */
+    /** Match a spoken app name to an installed app's launch intent. First tries
+     *  an exact substring (fast, precise). If nothing contains the name — e.g.
+     *  Vosk misheard a brand name as "zoe mato" / "what sap" — falls back to a
+     *  fuzzy match: the app whose label is closest to the heard name by edit
+     *  distance wins, if it's close enough. This is what makes app names Vosk
+     *  can't spell still open the right app. */
     private fun findLaunchIntent(name: String): Intent? {
         val pm = ctx.packageManager
         val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val best = pm.queryIntentActivities(main, 0)
-            .filter { it.loadLabel(pm).toString().lowercase().contains(name) }
+        val apps = pm.queryIntentActivities(main, 0)
+
+        // 1) exact substring, shortest label wins (closest match)
+        apps.filter { it.loadLabel(pm).toString().lowercase().contains(name) }
             .minByOrNull { it.loadLabel(pm).length }
-            ?: return null
-        return pm.getLaunchIntentForPackage(best.activityInfo.packageName)
+            ?.let { return pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
+
+        // 2) fuzzy: the heard name (spaces removed, so "zoe mato" ~ "zomato")
+        //    vs each label (spaces removed), best normalized similarity wins.
+        val heard = name.replace(" ", "")
+        var bestPkg: String? = null
+        var bestSim = 0.0
+        for (ri in apps) {
+            val label = ri.loadLabel(pm).toString().lowercase().replace(" ", "")
+            if (label.isEmpty()) continue
+            val sim = 1.0 - editDistance(heard, label).toDouble() /
+                maxOf(heard.length, label.length)
+            if (sim > bestSim) { bestSim = sim; bestPkg = ri.activityInfo.packageName }
+        }
+        // 0.55 threshold: "zoe mato"->"zomato" ~0.75 passes; a random word ~0.2 fails.
+        // shortcut: fixed threshold tuned by hand; lower it if real apps are missed.
+        return if (bestSim >= 0.55 && bestPkg != null)
+            pm.getLaunchIntentForPackage(bestPkg) else null
+    }
+
+    /** Levenshtein edit distance (two-row, O(min) space). Small inputs (app
+     *  names), so no need for anything cleverer. */
+    private fun editDistance(a: String, b: String): Int {
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+        var prev = IntArray(b.length + 1) { it }
+        var cur = IntArray(b.length + 1)
+        for (i in 1..a.length) {
+            cur[0] = i
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                cur[j] = minOf(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+            }
+            val tmp = prev; prev = cur; cur = tmp
+        }
+        return prev[b.length]
     }
 
     /** Call a spoken number, or look a name up in contacts and call it.
